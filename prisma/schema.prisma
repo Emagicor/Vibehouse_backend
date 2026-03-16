@@ -1,0 +1,497 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model addon_order_items {
+  id              String          @id @db.VarChar(36)
+  addon_order_id  String          @db.VarChar(36)
+  product_id      String          @db.VarChar(36)
+  quantity        Int             @default(1)
+  unit_price      Decimal         @db.Decimal(10, 2)
+  total_price     Decimal         @db.Decimal(10, 2)
+  unit_code       String?         @db.VarChar(20)
+  addon_orders    addon_orders    @relation(fields: [addon_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  product_catalog product_catalog @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model addon_orders {
+  id                  String              @id @db.VarChar(36)
+  ezee_reservation_id String              @db.VarChar(100)
+  guest_id            String              @db.VarChar(36)
+  payment_id          String?             @db.VarChar(36)
+  phase               String              @db.VarChar(20)
+  status              String              @default("PENDING") @db.VarChar(20)
+  ezee_sync_status    String              @default("NOT_SYNCED") @db.VarChar(20)
+  created_at          DateTime            @default(now()) @db.Timestamp(6)
+  addon_order_items   addon_order_items[]
+  ezee_booking_cache  ezee_booking_cache  @relation(fields: [ezee_reservation_id], references: [ezee_reservation_id], onDelete: NoAction, onUpdate: NoAction)
+  guests              guests              @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  payments            payments?           @relation(fields: [payment_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  zoho_ticket_ref     zoho_ticket_ref[]
+
+  @@index([ezee_reservation_id], map: "idx_addon_orders_reservation")
+}
+
+model admin_activity_log {
+  id          String   @id @db.VarChar(36)
+  actor_type  String   @db.VarChar(20)
+  actor_id    String   @db.VarChar(100)
+  action      String   @db.VarChar(50)
+  entity_type String   @db.VarChar(50)
+  entity_id   String   @db.VarChar(36)
+  old_value   Json?
+  new_value   Json?
+  ip_address  String?  @db.VarChar(45)
+  created_at  DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([actor_id, created_at], map: "idx_admin_log_actor")
+  @@index([entity_type, entity_id], map: "idx_admin_log_entity")
+}
+
+model admin_roles {
+  id           String        @id @db.VarChar(36)
+  name         String        @unique @db.VarChar(50)
+  display_name String        @db.VarChar(100)
+  permissions  Json
+  is_active    Boolean       @default(true)
+  created_at   DateTime      @default(now()) @db.Timestamp(6)
+  admin_users  admin_users[]
+}
+
+model admin_users {
+  id                   String                 @id @db.VarChar(36)
+  name                 String                 @db.VarChar(255)
+  email                String                 @unique @db.VarChar(255)
+  phone                String?                @db.VarChar(20)
+  password_hash        String                 @db.VarChar(255)
+  role_id              String                 @db.VarChar(36)
+  property_id          String?                @db.VarChar(36)
+  is_active            Boolean                @default(true)
+  two_fa_enabled       Boolean                @default(false)
+  two_fa_secret        String?                @db.VarChar(255)
+  last_login_at        DateTime?              @db.Timestamp(6)
+  created_at           DateTime               @default(now()) @db.Timestamp(6)
+  updated_at           DateTime               @default(now()) @db.Timestamp(6)
+  properties           properties?            @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  admin_roles          admin_roles            @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  borrowable_checkouts borrowable_checkouts[]
+
+  @@index([email, is_active], map: "idx_admin_users_email_active")
+  @@index([role_id], map: "idx_admin_users_role")
+}
+
+model auth_providers {
+  id           String   @id @db.VarChar(36)
+  guest_id     String   @db.VarChar(36)
+  provider     String   @db.VarChar(50)
+  provider_uid String   @db.VarChar(255)
+  created_at   DateTime @default(now()) @db.Timestamp(6)
+  guests       guests   @relation(fields: [guest_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([provider, provider_uid])
+}
+
+model booking_guest_access {
+  id                                                       String             @id @db.VarChar(36)
+  ezee_reservation_id                                      String             @db.VarChar(100)
+  guest_id                                                 String             @db.VarChar(36)
+  role                                                     String             @db.VarChar(20)
+  status                                                   String             @default("PENDING_APPROVAL") @db.VarChar(30)
+  approved_by_guest_id                                     String?            @db.VarChar(36)
+  approved_at                                              DateTime?          @db.Timestamp(6)
+  created_at                                               DateTime           @default(now()) @db.Timestamp(6)
+  guests_booking_guest_access_approved_by_guest_idToguests guests?            @relation("booking_guest_access_approved_by_guest_idToguests", fields: [approved_by_guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  ezee_booking_cache                                       ezee_booking_cache @relation(fields: [ezee_reservation_id], references: [ezee_reservation_id], onDelete: NoAction, onUpdate: NoAction)
+  guests_booking_guest_access_guest_idToguests             guests             @relation("booking_guest_access_guest_idToguests", fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([ezee_reservation_id, guest_id])
+  @@index([guest_id], map: "idx_booking_access_guest")
+  @@index([ezee_reservation_id], map: "idx_booking_access_reservation")
+}
+
+model borrowable_checkouts {
+  id                                 String             @id @db.VarChar(36)
+  inventory_id                       String             @db.VarChar(36)
+  ezee_reservation_id                String             @db.VarChar(100)
+  guest_id                           String             @db.VarChar(36)
+  unit_code                          String             @db.VarChar(20)
+  checked_out_at                     DateTime           @default(now()) @db.Timestamp(6)
+  returned_at                        DateTime?          @db.Timestamp(6)
+  returned_verified_by_zoho_staff_id String?            @db.VarChar(100)
+  status                             String             @default("CHECKED_OUT") @db.VarChar(15)
+  issued_by_admin_id                 String?            @db.VarChar(255)
+  ezee_booking_cache                 ezee_booking_cache @relation(fields: [ezee_reservation_id], references: [ezee_reservation_id], onDelete: NoAction, onUpdate: NoAction)
+  guests                             guests             @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  inventory                          inventory          @relation(fields: [inventory_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  admin_users                        admin_users?       @relation(fields: [issued_by_admin_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "fk_borrowable_issued_by")
+
+  @@index([guest_id, status], map: "idx_borrowable_guest_status")
+}
+
+model checkin_records {
+  id                        String             @id @db.VarChar(36)
+  ezee_reservation_id       String             @db.VarChar(100)
+  guest_id                  String             @db.VarChar(36)
+  selfie_url                String?            @db.VarChar(500)
+  face_match_score          Decimal?           @db.Decimal(4, 3)
+  face_match_status         String?            @db.VarChar(10)
+  onsite_scan_url           String?            @db.VarChar(500)
+  ssim_score                Decimal?           @db.Decimal(4, 3)
+  doc_match_status          String?            @db.VarChar(10)
+  gcard_pdf_url             String?            @db.VarChar(500)
+  signature_png_url         String?            @db.VarChar(500)
+  manual_override           Boolean            @default(false)
+  override_by_zoho_staff_id String?            @db.VarChar(100)
+  status                    String             @default("PENDING") @db.VarChar(20)
+  checked_in_at             DateTime?          @db.Timestamp(6)
+  ezee_booking_cache        ezee_booking_cache @relation(fields: [ezee_reservation_id], references: [ezee_reservation_id], onDelete: NoAction, onUpdate: NoAction)
+  guests                    guests             @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([ezee_reservation_id], map: "idx_checkin_reservation")
+}
+
+model ezee_booking_cache {
+  ezee_reservation_id  String                 @id @db.VarChar(100)
+  property_id          String                 @db.VarChar(36)
+  guest_id             String?                @db.VarChar(36)
+  booker_email         String?                @db.VarChar(255)
+  booker_phone         String?                @db.VarChar(20)
+  room_type_name       String?                @db.VarChar(100)
+  room_number          String?                @db.VarChar(20)
+  unit_code            String?                @db.VarChar(20)
+  checkin_date         DateTime?              @db.Date
+  checkout_date        DateTime?              @db.Date
+  no_of_guests         Int?                   @default(1)
+  source               String?                @db.VarChar(50)
+  status               String?                @db.VarChar(30)
+  is_active            Boolean                @default(true)
+  fetched_at           DateTime               @db.Timestamp(6)
+  created_at           DateTime               @default(now()) @db.Timestamp(6)
+  addon_orders         addon_orders[]
+  booking_guest_access booking_guest_access[]
+  borrowable_checkouts borrowable_checkouts[]
+  checkin_records      checkin_records[]
+  guests               guests?                @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  properties           properties             @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  kyc_submissions      kyc_submissions[]
+  payments             payments[]
+  smart_lock_access    smart_lock_access[]
+  stay_extensions      stay_extensions[]
+  zoho_ticket_ref      zoho_ticket_ref[]
+
+  @@index([guest_id], map: "idx_ezee_cache_guest")
+  @@index([property_id, status], map: "idx_ezee_cache_property")
+}
+
+model ezee_connection {
+  id                 String     @id @db.VarChar(36)
+  property_id        String     @db.VarChar(36)
+  hotel_code         String     @db.VarChar(100)
+  api_key            String     @db.VarChar(255)
+  api_endpoint       String     @db.VarChar(500)
+  channel_manager_id String?    @db.VarChar(100)
+  is_active          Boolean    @default(true)
+  created_at         DateTime   @default(now()) @db.Timestamp(6)
+  updated_at         DateTime   @default(now()) @db.Timestamp(6)
+  properties         properties @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model ezee_sync_log {
+  id                String    @id @db.VarChar(36)
+  entity_type       String    @db.VarChar(30)
+  entity_id         String    @db.VarChar(36)
+  action            String    @db.VarChar(50)
+  status            String    @default("PENDING") @db.VarChar(10)
+  attempts          Int       @default(0)
+  last_attempted_at DateTime? @db.Timestamp(6)
+  next_retry_at     DateTime? @db.Timestamp(6)
+  error_message     String?
+  created_at        DateTime  @default(now()) @db.Timestamp(6)
+
+  @@index([status, next_retry_at], map: "idx_ezee_sync_status_retry")
+}
+
+model guests {
+  id                                                                     String                 @id @db.VarChar(36)
+  name                                                                   String                 @db.VarChar(255)
+  email                                                                  String?                @unique @db.VarChar(255)
+  phone                                                                  String?                @unique @db.VarChar(20)
+  password_hash                                                          String?                @db.VarChar(255)
+  email_verified                                                         Boolean                @default(false)
+  phone_verified                                                         Boolean                @default(false)
+  profile_photo_url                                                      String?                @db.VarChar(500)
+  created_at                                                             DateTime               @default(now()) @db.Timestamp(6)
+  addon_orders                                                           addon_orders[]
+  auth_providers                                                         auth_providers[]
+  booking_guest_access_booking_guest_access_approved_by_guest_idToguests booking_guest_access[] @relation("booking_guest_access_approved_by_guest_idToguests")
+  booking_guest_access_booking_guest_access_guest_idToguests             booking_guest_access[] @relation("booking_guest_access_guest_idToguests")
+  borrowable_checkouts                                                   borrowable_checkouts[]
+  checkin_records                                                        checkin_records[]
+  ezee_booking_cache                                                     ezee_booking_cache[]
+  kyc_submissions                                                        kyc_submissions[]
+  notification_log                                                       notification_log[]
+  otp_logs                                                               otp_logs[]
+  payments                                                               payments[]
+  smart_lock_access                                                      smart_lock_access[]
+  stay_extensions                                                        stay_extensions[]
+  zoho_ticket_ref                                                        zoho_ticket_ref[]
+}
+
+model inventory {
+  id                   String                 @id @db.VarChar(36)
+  property_id          String                 @db.VarChar(36)
+  product_id           String                 @db.VarChar(36)
+  total_stock          Int
+  available_stock      Int
+  reserved_stock       Int                    @default(0)
+  sold_count           Int                    @default(0)
+  damaged_count        Int                    @default(0)
+  borrowed_out_count   Int                    @default(0)
+  low_stock_threshold  Int                    @default(5)
+  updated_at           DateTime               @default(now()) @db.Timestamp(6)
+  borrowable_checkouts borrowable_checkouts[]
+  product_catalog      product_catalog        @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  properties           properties             @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([property_id, product_id])
+  @@index([property_id, product_id], map: "idx_inventory_product")
+}
+
+model kyc_submissions {
+  id                  String             @id @db.VarChar(36)
+  ezee_reservation_id String             @db.VarChar(100)
+  guest_id            String             @db.VarChar(36)
+  nationality_type    String             @db.VarChar(20)
+  id_type             String             @db.VarChar(20)
+  front_image_url     String             @db.VarChar(500)
+  back_image_url      String?            @db.VarChar(500)
+  ocr_name            String?            @db.VarChar(255)
+  ocr_dob             String?            @db.VarChar(20)
+  ocr_id_number       String?            @db.VarChar(100)
+  ocr_address         String?
+  coming_from         String?            @db.VarChar(255)
+  going_to            String?            @db.VarChar(255)
+  purpose             String?            @db.VarChar(255)
+  consent_given       Boolean            @default(false)
+  status              String             @default("PENDING") @db.VarChar(20)
+  submitted_at        DateTime?          @db.Timestamp(6)
+  created_at          DateTime           @default(now()) @db.Timestamp(6)
+  ezee_booking_cache  ezee_booking_cache @relation(fields: [ezee_reservation_id], references: [ezee_reservation_id], onDelete: NoAction, onUpdate: NoAction)
+  guests              guests             @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([ezee_reservation_id, guest_id], map: "idx_kyc_reservation")
+}
+
+model mygate_connection {
+  id                 String     @id @db.VarChar(36)
+  property_id        String     @db.VarChar(36)
+  mygate_property_id String     @db.VarChar(100)
+  api_key            String     @db.VarChar(255)
+  api_endpoint       String     @db.VarChar(500)
+  admin_phone        String?    @db.VarChar(20)
+  is_active          Boolean    @default(true)
+  created_at         DateTime   @default(now()) @db.Timestamp(6)
+  updated_at         DateTime   @default(now()) @db.Timestamp(6)
+  properties         properties @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model mygate_devices {
+  id                    String                  @id @db.VarChar(36)
+  property_id           String                  @db.VarChar(36)
+  room_number           String                  @db.VarChar(20)
+  mygate_room_id        String                  @db.VarChar(100)
+  lock_serial           String                  @db.VarChar(100)
+  lock_type             String                  @db.VarChar(20)
+  battery_pct           Int?
+  battery_status        String                  @default("OK") @db.VarChar(10)
+  last_health_at        DateTime?               @db.Timestamp(6)
+  has_manual_key        Boolean                 @default(true)
+  is_active             Boolean                 @default(true)
+  created_at            DateTime                @default(now()) @db.Timestamp(6)
+  properties            properties              @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  smart_lock_access     smart_lock_access[]
+  smart_lock_access_log smart_lock_access_log[]
+
+  @@index([property_id, is_active], map: "idx_device_property")
+}
+
+model notification_log {
+  id                      String   @id @db.VarChar(36)
+  recipient_guest_id      String?  @db.VarChar(36)
+  recipient_zoho_staff_id String?  @db.VarChar(100)
+  channel                 String   @db.VarChar(20)
+  type                    String   @db.VarChar(50)
+  payload                 Json?
+  status                  String   @default("SENT") @db.VarChar(10)
+  sent_at                 DateTime @default(now()) @db.Timestamp(6)
+  guests                  guests?  @relation(fields: [recipient_guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model otp_logs {
+  id         String    @id @db.VarChar(36)
+  guest_id   String?   @db.VarChar(36)
+  recipient  String    @db.VarChar(255)
+  channel    String    @db.VarChar(20)
+  purpose    String    @db.VarChar(50)
+  otp_hash   String    @db.VarChar(255)
+  expires_at DateTime  @db.Timestamp(6)
+  used_at    DateTime? @db.Timestamp(6)
+  created_at DateTime  @default(now()) @db.Timestamp(6)
+  guests     guests?   @relation(fields: [guest_id], references: [id], onUpdate: NoAction)
+}
+
+model payments {
+  id                  String             @id @db.VarChar(36)
+  ezee_reservation_id String             @db.VarChar(100)
+  guest_id            String             @db.VarChar(36)
+  razorpay_order_id   String?            @unique @db.VarChar(100)
+  razorpay_payment_id String?            @unique @db.VarChar(100)
+  amount              Decimal            @db.Decimal(10, 2)
+  currency            String             @default("INR") @db.VarChar(5)
+  purpose             String             @db.VarChar(30)
+  status              String             @default("PENDING") @db.VarChar(20)
+  expires_at          DateTime?          @db.Timestamp(6)
+  created_at          DateTime           @default(now()) @db.Timestamp(6)
+  updated_at          DateTime           @default(now()) @db.Timestamp(6)
+  addon_orders        addon_orders[]
+  ezee_booking_cache  ezee_booking_cache @relation(fields: [ezee_reservation_id], references: [ezee_reservation_id], onDelete: NoAction, onUpdate: NoAction)
+  guests              guests             @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  stay_extensions     stay_extensions[]
+
+  @@index([ezee_reservation_id], map: "idx_payments_reservation")
+  @@index([status, expires_at], map: "idx_payments_status_expires")
+}
+
+model product_catalog {
+  id                String              @id @db.VarChar(36)
+  property_id       String              @db.VarChar(36)
+  name              String              @db.VarChar(255)
+  description       String?
+  category          String              @db.VarChar(20)
+  base_price        Decimal             @default(0) @db.Decimal(10, 2)
+  is_active         Boolean             @default(true)
+  addon_order_items addon_order_items[]
+  inventory         inventory[]
+  properties        properties          @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model properties {
+  id                 String               @id @db.VarChar(36)
+  name               String               @db.VarChar(255)
+  address            String
+  city               String               @db.VarChar(100)
+  branding_config    Json?
+  created_at         DateTime             @default(now()) @db.Timestamp(6)
+  admin_users        admin_users[]
+  ezee_booking_cache ezee_booking_cache[]
+  ezee_connection    ezee_connection[]
+  inventory          inventory[]
+  mygate_connection  mygate_connection[]
+  mygate_devices     mygate_devices[]
+  product_catalog    product_catalog[]
+  sla_config         sla_config[]
+}
+
+model sla_config {
+  id             String     @id @db.VarChar(36)
+  property_id    String     @db.VarChar(36)
+  task_category  String     @db.VarChar(20)
+  department     String     @db.VarChar(30)
+  priority       String     @default("MEDIUM") @db.VarChar(10)
+  sla_minutes    Int
+  l0_timeout_min Int
+  l1_timeout_min Int
+  l2_timeout_min Int
+  l3_timeout_min Int
+  is_active      Boolean    @default(true)
+  updated_at     DateTime   @default(now()) @db.Timestamp(6)
+  properties     properties @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([property_id, task_category, department, priority])
+  @@index([property_id, task_category, department, priority], map: "idx_sla_config_lookup")
+}
+
+model smart_lock_access {
+  id                    String                  @id @db.VarChar(36)
+  ezee_reservation_id   String                  @db.VarChar(100)
+  guest_id              String                  @db.VarChar(36)
+  device_id             String                  @db.VarChar(36)
+  room_number           String                  @db.VarChar(20)
+  mygate_pin            String                  @db.VarChar(20)
+  pin_type              String                  @default("AUTO") @db.VarChar(10)
+  pin_validity          String                  @default("TIMED") @db.VarChar(10)
+  is_master_pin         Boolean                 @default(false)
+  pin_status            String                  @default("ACTIVE") @db.VarChar(10)
+  valid_from            DateTime                @db.Timestamp(6)
+  valid_until           DateTime?               @db.Timestamp(6)
+  created_at            DateTime                @default(now()) @db.Timestamp(6)
+  revoked_at            DateTime?               @db.Timestamp(6)
+  mygate_devices        mygate_devices          @relation(fields: [device_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  ezee_booking_cache    ezee_booking_cache      @relation(fields: [ezee_reservation_id], references: [ezee_reservation_id], onDelete: NoAction, onUpdate: NoAction)
+  guests                guests                  @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  smart_lock_access_log smart_lock_access_log[]
+
+  @@index([device_id, pin_status], map: "idx_lock_access_device")
+  @@index([ezee_reservation_id, pin_status], map: "idx_lock_access_reservation")
+}
+
+model smart_lock_access_log {
+  id                String             @id @db.VarChar(36)
+  device_id         String             @db.VarChar(36)
+  pin_id            String?            @db.VarChar(36)
+  event_type        String             @db.VarChar(20)
+  event_source      String             @db.VarChar(20)
+  event_at          DateTime           @db.Timestamp(6)
+  raw_payload       Json?
+  created_at        DateTime           @default(now()) @db.Timestamp(6)
+  mygate_devices    mygate_devices     @relation(fields: [device_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  smart_lock_access smart_lock_access? @relation(fields: [pin_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([device_id, event_at], map: "idx_lock_log_device")
+  @@index([pin_id], map: "idx_lock_log_pin")
+}
+
+model stay_extensions {
+  id                  String             @id @db.VarChar(36)
+  ezee_reservation_id String             @db.VarChar(100)
+  guest_id            String             @db.VarChar(36)
+  payment_id          String?            @db.VarChar(36)
+  old_checkout_date   DateTime           @db.Date
+  new_checkout_date   DateTime           @db.Date
+  rate_per_night      Decimal            @db.Decimal(10, 2)
+  total_amount        Decimal            @db.Decimal(10, 2)
+  same_bed_available  Boolean
+  disclaimer_accepted Boolean            @default(false)
+  ezee_sync_status    String             @default("NOT_SYNCED") @db.VarChar(20)
+  status              String             @default("PENDING") @db.VarChar(20)
+  created_at          DateTime           @default(now()) @db.Timestamp(6)
+  ezee_booking_cache  ezee_booking_cache @relation(fields: [ezee_reservation_id], references: [ezee_reservation_id], onDelete: NoAction, onUpdate: NoAction)
+  guests              guests             @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  payments            payments?          @relation(fields: [payment_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model zoho_ticket_ref {
+  id                  String              @id @db.VarChar(36)
+  zoho_ticket_id      String              @unique @db.VarChar(100)
+  ezee_reservation_id String?             @db.VarChar(100)
+  guest_id            String?             @db.VarChar(36)
+  addon_order_id      String?             @db.VarChar(36)
+  ticket_type         String              @db.VarChar(20)
+  department          String              @db.VarChar(30)
+  room_number         String?             @db.VarChar(20)
+  unit_code           String?             @db.VarChar(20)
+  status              String              @default("OPEN") @db.VarChar(20)
+  synced_at           DateTime            @db.Timestamp(6)
+  created_at          DateTime            @default(now()) @db.Timestamp(6)
+  addon_orders        addon_orders?       @relation(fields: [addon_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  ezee_booking_cache  ezee_booking_cache? @relation(fields: [ezee_reservation_id], references: [ezee_reservation_id], onDelete: NoAction, onUpdate: NoAction)
+  guests              guests?             @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([ezee_reservation_id], map: "idx_zoho_ticket_reservation")
+  @@index([status], map: "idx_zoho_ticket_status")
+}
