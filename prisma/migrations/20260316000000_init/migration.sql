@@ -1,4 +1,4 @@
-﻿-- CreateTable
+-- CreateTable
 CREATE TABLE "addon_order_items" (
     "id" VARCHAR(36) NOT NULL,
     "addon_order_id" VARCHAR(36) NOT NULL,
@@ -670,4 +670,3 @@ ALTER TABLE "zoho_ticket_ref" ADD CONSTRAINT "zoho_ticket_ref_ezee_reservation_i
 
 -- AddForeignKey
 ALTER TABLE "zoho_ticket_ref" ADD CONSTRAINT "zoho_ticket_ref_guest_id_fkey" FOREIGN KEY ("guest_id") REFERENCES "guests"("id") ON DELETE NO ACTION ON UPDATE NO ACTION;
-
