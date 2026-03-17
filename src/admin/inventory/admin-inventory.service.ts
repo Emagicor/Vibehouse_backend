@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CacheService } from '../../redis/cache.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { RestockDto } from './dto/restock.dto';
@@ -16,7 +17,10 @@ import type { AdminJwtPayload } from '../../common/guards/admin-jwt.strategy';
 
 @Injectable()
 export class AdminInventoryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cacheService: CacheService,
+  ) {}
 
   // ──────────────────────────────────────────────────────────────────────────
   // PRODUCT CATALOG
@@ -71,6 +75,9 @@ export class AdminInventoryService {
       },
     });
 
+    // Invalidate cache for this property
+    await this.cacheService.invalidatePropertyCache(propertyId);
+
     return {
       ...this.formatProduct(product),
       inventory: inventoryRow ? this.formatStock(inventoryRow) : null,
@@ -78,6 +85,12 @@ export class AdminInventoryService {
   }
 
   async listProducts(propertyId: string | null) {
+    // Cache-aside: check cache first (use 'all' for owner who sees all properties)
+    const cachePropertyId = propertyId ?? 'all';
+    const cacheKey = CacheService.adminProductsKey(cachePropertyId);
+    const cached = await this.cacheService.get<unknown[]>(cacheKey);
+    if (cached) return cached;
+
     const where = propertyId ? { property_id: propertyId } : {};
     const products = await this.prisma.product_catalog.findMany({
       where,
@@ -85,10 +98,13 @@ export class AdminInventoryService {
       orderBy: [{ category: 'asc' }, { name: 'asc' }],
     });
 
-    return products.map((p) => ({
+    const result = products.map((p) => ({
       ...this.formatProduct(p),
       inventory: p.inventory.length > 0 ? this.formatStock(p.inventory[0]) : null,
     }));
+
+    await this.cacheService.set(cacheKey, result, CacheService.TTL_CATALOG);
+    return result;
   }
 
   async getProduct(id: string) {
@@ -134,6 +150,11 @@ export class AdminInventoryService {
       },
     });
 
+    // Invalidate cache
+    await this.cacheService.invalidatePropertyCache(existing.property_id);
+    // Also invalidate 'all' key for owner view
+    await this.cacheService.invalidatePropertyCache('all');
+
     return {
       ...this.formatProduct(updated),
       inventory: updated.inventory.length > 0 ? this.formatStock(updated.inventory[0]) : null,
@@ -169,6 +190,10 @@ export class AdminInventoryService {
       },
     });
 
+    // Invalidate cache
+    await this.cacheService.invalidatePropertyCache(product.property_id);
+    await this.cacheService.invalidatePropertyCache('all');
+
     return { message: 'Product deleted successfully' };
   }
 
@@ -177,6 +202,12 @@ export class AdminInventoryService {
   // ──────────────────────────────────────────────────────────────────────────
 
   async listStock(propertyId: string | null) {
+    // Cache-aside: check cache first
+    const cachePropertyId = propertyId ?? 'all';
+    const cacheKey = CacheService.adminStockKey(cachePropertyId);
+    const cached = await this.cacheService.get<unknown[]>(cacheKey);
+    if (cached) return cached;
+
     const where = propertyId ? { property_id: propertyId } : {};
     const rows = await this.prisma.inventory.findMany({
       where,
@@ -184,10 +215,13 @@ export class AdminInventoryService {
       orderBy: { product_catalog: { name: 'asc' } },
     });
 
-    return rows.map((r) => ({
+    const result = rows.map((r) => ({
       ...this.formatStock(r),
       product: this.formatProduct(r.product_catalog),
     }));
+
+    await this.cacheService.set(cacheKey, result, CacheService.TTL_CATALOG);
+    return result;
   }
 
   async restock(productId: string, dto: RestockDto, actor: AdminJwtPayload) {
@@ -218,6 +252,10 @@ export class AdminInventoryService {
         new_value: { quantity_added: dto.quantity, new_total: updated.total_stock },
       },
     });
+
+    // Invalidate cache
+    await this.cacheService.invalidatePropertyCache(inv.property_id);
+    await this.cacheService.invalidatePropertyCache('all');
 
     return {
       ...this.formatStock(updated),
@@ -265,6 +303,10 @@ export class AdminInventoryService {
       },
     });
 
+    // Invalidate cache
+    await this.cacheService.invalidatePropertyCache(inv.property_id);
+    await this.cacheService.invalidatePropertyCache('all');
+
     return {
       ...this.formatStock(updated),
       product: this.formatProduct(updated.product_catalog),
@@ -295,6 +337,10 @@ export class AdminInventoryService {
         new_value: dto as object,
       },
     });
+
+    // Invalidate cache
+    await this.cacheService.invalidatePropertyCache(inv.property_id);
+    await this.cacheService.invalidatePropertyCache('all');
 
     return {
       ...this.formatStock(updated),
@@ -419,6 +465,10 @@ export class AdminInventoryService {
         },
       },
     });
+
+    // Invalidate cache
+    await this.cacheService.invalidatePropertyCache(inv.property_id);
+    await this.cacheService.invalidatePropertyCache('all');
 
     return { message: 'Item checked out successfully', checkout_id: checkoutId };
   }
@@ -558,6 +608,16 @@ export class AdminInventoryService {
         new_value: { verified_by: staffId },
       },
     });
+
+    // Invalidate cache — need property_id from inventory
+    const inv = await this.prisma.inventory.findUnique({
+      where: { id: checkout.inventory_id },
+      select: { property_id: true },
+    });
+    if (inv) {
+      await this.cacheService.invalidatePropertyCache(inv.property_id);
+      await this.cacheService.invalidatePropertyCache('all');
+    }
 
     return { message: 'Return verified successfully' };
   }

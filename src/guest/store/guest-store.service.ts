@@ -5,6 +5,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CacheService } from '../../redis/cache.service';
 import { GuestJwtPayload } from '../../common/guards/guest-jwt.strategy';
 import { AddToCartDto } from './dto/add-to-cart.dto';
 import { UpdateCartItemDto } from './dto/update-cart-item.dto';
@@ -14,7 +15,10 @@ import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
 export class GuestStoreService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cacheService: CacheService,
+  ) {}
 
   // ─── HELPERS ──────────────────────────────────────────────────────────────
 
@@ -61,6 +65,11 @@ export class GuestStoreService {
    * Guests can browse this without a booking.
    */
   async getCatalog(propertyId: string) {
+    // Cache-aside: check cache first
+    const cacheKey = CacheService.catalogKey(propertyId);
+    const cached = await this.cacheService.get<unknown[]>(cacheKey);
+    if (cached) return cached;
+
     const products = await this.prisma.product_catalog.findMany({
       where: {
         property_id: propertyId,
@@ -92,12 +101,16 @@ export class GuestStoreService {
 
     const stockMap = new Map(inventoryRows.map((i) => [i.product_id, i.available_stock]));
 
-    return products.map((p) => ({
+    const result = products.map((p) => ({
       ...p,
       base_price: Number(p.base_price),
       in_stock: p.category === 'COMMODITY' ? (stockMap.get(p.id) ?? 0) > 0 : true,
       available_stock: p.category === 'COMMODITY' ? stockMap.get(p.id) ?? 0 : null,
     }));
+
+    // Write to cache
+    await this.cacheService.set(cacheKey, result, CacheService.TTL_CATALOG);
+    return result;
   }
 
   /**
@@ -105,7 +118,12 @@ export class GuestStoreService {
    * Room Cleaning, Linen Change, Maintenance, etc.
    */
   async getFreeServices(propertyId: string) {
-    return this.prisma.product_catalog.findMany({
+    // Cache-aside: check cache first
+    const cacheKey = CacheService.servicesKey(propertyId);
+    const cached = await this.cacheService.get<unknown[]>(cacheKey);
+    if (cached) return cached;
+
+    const result = await this.prisma.product_catalog.findMany({
       where: {
         property_id: propertyId,
         is_active: true,
@@ -121,12 +139,20 @@ export class GuestStoreService {
       },
       orderBy: { name: 'asc' },
     });
+
+    await this.cacheService.set(cacheKey, result, CacheService.TTL_CATALOG);
+    return result;
   }
 
   /**
    * List borrowable items with availability.
    */
   async getBorrowables(propertyId: string) {
+    // Cache-aside: check cache first
+    const cacheKey = CacheService.borrowablesKey(propertyId);
+    const cached = await this.cacheService.get<unknown[]>(cacheKey);
+    if (cached) return cached;
+
     const products = await this.prisma.product_catalog.findMany({
       where: {
         property_id: propertyId,
@@ -145,7 +171,7 @@ export class GuestStoreService {
       orderBy: { name: 'asc' },
     });
 
-    return products.map((p) => {
+    const result = products.map((p) => {
       const inv = p.inventory[0];
       return {
         id: p.id,
@@ -155,6 +181,9 @@ export class GuestStoreService {
         total: inv?.total_stock ?? 0,
       };
     });
+
+    await this.cacheService.set(cacheKey, result, CacheService.TTL_CATALOG);
+    return result;
   }
 
   // ─── CART ─────────────────────────────────────────────────────────────────
@@ -465,6 +494,9 @@ export class GuestStoreService {
       }
     }
 
+    // Invalidate catalog/stock cache after stock changes
+    await this.cacheService.invalidatePropertyCache(booking.property_id);
+
     return {
       message: 'Payment successful',
       order_id: cart.id,
@@ -541,6 +573,9 @@ export class GuestStoreService {
         borrowed_out_count: { increment: 1 },
       },
     });
+
+    // Invalidate borrowable cache
+    await this.cacheService.invalidatePropertyCache(booking.property_id);
 
     return {
       message: `"${product.name}" has been checked out to you`,

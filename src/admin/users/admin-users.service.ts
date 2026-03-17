@@ -9,6 +9,7 @@ import {
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CacheService } from '../../redis/cache.service';
 import { CreateAdminUserDto } from './dto/create-admin-user.dto';
 import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
 import { AdminJwtPayload } from '../../common/guards/admin-jwt.strategy';
@@ -16,7 +17,10 @@ import { ROLE_HIERARCHY } from '../../common/constants/role-hierarchy';
 
 @Injectable()
 export class AdminUsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cacheService: CacheService,
+  ) {}
 
   async create(dto: CreateAdminUserDto, actor: AdminJwtPayload) {
     const existing = await this.prisma.admin_users.findUnique({
@@ -152,6 +156,9 @@ export class AdminUsersService {
       },
     });
 
+    // Invalidate JWT cache so the deactivated admin is rejected immediately
+    await this.cacheService.invalidateAdminJwt(id);
+
     return { message: 'Admin user deactivated successfully' };
   }
 
@@ -277,6 +284,9 @@ export class AdminUsersService {
     });
 
     await this.prisma.admin_users.delete({ where: { id } });
+
+    // Invalidate JWT cache
+    await this.cacheService.invalidateAdminJwt(id);
 
     return { message: 'Admin user deleted successfully' };
   }
