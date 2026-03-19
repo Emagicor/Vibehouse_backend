@@ -5,6 +5,10 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // Increase JSON body limit for base64 image uploads (OCR test endpoint).
+  // A 5 MB image → ~7 MB base64; 15 MB gives comfortable headroom.
+  app.use(require('express').json({ limit: '15mb' }));
+
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }),
   );

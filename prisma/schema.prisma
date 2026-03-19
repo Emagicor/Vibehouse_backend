@@ -133,6 +133,22 @@ model borrowable_checkouts {
   @@index([guest_id, status], map: "idx_borrowable_guest_status")
 }
 
+model booking_slots {
+  id                  String             @id @db.VarChar(36)
+  ezee_reservation_id String             @db.VarChar(100)
+  slot_number         Int
+  guest_id            String?            @db.VarChar(36)
+  label               String             @db.VarChar(50)
+  kyc_status          String             @default("NOT_STARTED") @db.VarChar(20)
+  created_at          DateTime           @default(now()) @db.Timestamp(6)
+  ezee_booking_cache  ezee_booking_cache @relation(fields: [ezee_reservation_id], references: [ezee_reservation_id], onDelete: NoAction, onUpdate: NoAction)
+  guests              guests?            @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  kyc_submissions     kyc_submissions[]
+
+  @@unique([ezee_reservation_id, slot_number])
+  @@index([ezee_reservation_id], map: "idx_booking_slots_eri")
+}
+
 model checkin_records {
   id                        String             @id @db.VarChar(36)
   ezee_reservation_id       String             @db.VarChar(100)
@@ -174,6 +190,7 @@ model ezee_booking_cache {
   created_at           DateTime               @default(now()) @db.Timestamp(6)
   addon_orders         addon_orders[]
   booking_guest_access booking_guest_access[]
+  booking_slots        booking_slots[]
   borrowable_checkouts borrowable_checkouts[]
   checkin_records      checkin_records[]
   guests               guests?                @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
@@ -230,10 +247,12 @@ model guests {
   auth_providers                                                         auth_providers[]
   booking_guest_access_booking_guest_access_approved_by_guest_idToguests booking_guest_access[] @relation("booking_guest_access_approved_by_guest_idToguests")
   booking_guest_access_booking_guest_access_guest_idToguests             booking_guest_access[] @relation("booking_guest_access_guest_idToguests")
+  booking_slots                                                          booking_slots[]
   borrowable_checkouts                                                   borrowable_checkouts[]
   checkin_records                                                        checkin_records[]
   ezee_booking_cache                                                     ezee_booking_cache[]
   kyc_submissions                                                        kyc_submissions[]
+  kyc_submitted_by                                                       kyc_submissions[]      @relation("kyc_submitted_by")
   notification_log                                                       notification_log[]
   otp_logs                                                               otp_logs[]
   payments                                                               payments[]
@@ -263,28 +282,38 @@ model inventory {
 }
 
 model kyc_submissions {
-  id                  String             @id @db.VarChar(36)
-  ezee_reservation_id String             @db.VarChar(100)
-  guest_id            String             @db.VarChar(36)
-  nationality_type    String             @db.VarChar(20)
-  id_type             String             @db.VarChar(20)
-  front_image_url     String             @db.VarChar(500)
-  back_image_url      String?            @db.VarChar(500)
-  ocr_name            String?            @db.VarChar(255)
-  ocr_dob             String?            @db.VarChar(20)
-  ocr_id_number       String?            @db.VarChar(100)
-  ocr_address         String?
-  coming_from         String?            @db.VarChar(255)
-  going_to            String?            @db.VarChar(255)
-  purpose             String?            @db.VarChar(255)
-  consent_given       Boolean            @default(false)
-  status              String             @default("PENDING") @db.VarChar(20)
-  submitted_at        DateTime?          @db.Timestamp(6)
-  created_at          DateTime           @default(now()) @db.Timestamp(6)
-  ezee_booking_cache  ezee_booking_cache @relation(fields: [ezee_reservation_id], references: [ezee_reservation_id], onDelete: NoAction, onUpdate: NoAction)
-  guests              guests             @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                     String             @id @db.VarChar(36)
+  ezee_reservation_id    String             @db.VarChar(100)
+  guest_id               String             @db.VarChar(36)
+  slot_id                String?            @db.VarChar(36)
+  nationality_type       String             @db.VarChar(20)
+  id_type                String             @db.VarChar(20)
+  front_image_url        String?            @db.VarChar(500)
+  back_image_url         String?            @db.VarChar(500)
+  ocr_name               String?            @db.VarChar(255)
+  ocr_dob                String?            @db.VarChar(20)
+  ocr_id_number          String?            @db.VarChar(100)
+  ocr_address            String?
+  full_name              String?            @db.VarChar(255)
+  date_of_birth          DateTime?          @db.Date
+  id_number              String?            @db.VarChar(100)
+  permanent_address      String?
+  contact_number         String?            @db.VarChar(20)
+  coming_from            String?            @db.VarChar(255)
+  going_to               String?            @db.VarChar(255)
+  purpose                String?            @db.VarChar(255)
+  consent_given          Boolean            @default(false)
+  status                 String             @default("PENDING") @db.VarChar(20)
+  submitted_at           DateTime?          @db.Timestamp(6)
+  submitted_by_guest_id  String?            @db.VarChar(36)
+  created_at             DateTime           @default(now()) @db.Timestamp(6)
+  ezee_booking_cache     ezee_booking_cache @relation(fields: [ezee_reservation_id], references: [ezee_reservation_id], onDelete: NoAction, onUpdate: NoAction)
+  guests                 guests             @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  booking_slots          booking_slots?     @relation(fields: [slot_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  submitted_by           guests?            @relation("kyc_submitted_by", fields: [submitted_by_guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([ezee_reservation_id, guest_id], map: "idx_kyc_reservation")
+  @@index([slot_id], map: "idx_kyc_slot")
 }
 
 model mygate_connection {
