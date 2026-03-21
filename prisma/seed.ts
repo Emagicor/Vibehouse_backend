@@ -43,6 +43,7 @@ async function main() {
         'financial.view', 'financial.export',
         'checkin.override', 'borrowable.manage', 'borrowable.return_verify',
         'maintenance.tickets',
+        'bookings.view', 'bookings.create',
       ],
     },
     {
@@ -57,6 +58,7 @@ async function main() {
         'orders.view', 'orders.refund',
         'devices.view', 'devices.manage',
         'admin.manage', 'admin.create',
+        'bookings.view', 'bookings.create',
       ],
     },
     {
@@ -69,6 +71,7 @@ async function main() {
         'orders.view',
         'checkin.override',
         'borrowable.manage',
+        'bookings.view', 'bookings.create',
       ],
     },
     {
@@ -533,7 +536,61 @@ async function main() {
   console.log('   rahul.verma@protonmail.com → PRIMARY D-101 (007)');
   console.log('   preethi@vibehouse.in      → PRIMARY D-102 (008)');
 
-  // ─── 7. PRODUCT CATALOG ──────────────────────────────────────────────────
+  // ─── 7. ROOM TYPES ──────────────────────────────────────────────────────
+  const roomTypes = [
+    {
+      id: 'rt-queen',
+      property_id: propertyId,
+      name: 'Queen Size Room',
+      slug: 'queen-size-room',
+      type: 'PRIVATE',
+      total_rooms: 15,
+      beds_per_room: 1,
+      total_beds: 15,
+      base_price_per_night: 1999,
+      floor_range: '1-5',
+      amenities: ['AC', 'Attached Bathroom', 'WiFi', 'TV', 'Wardrobe'],
+    },
+    {
+      id: 'rt-4dorm',
+      property_id: propertyId,
+      name: '4 Bed Mixed Dormitory',
+      slug: '4-bed-mixed-dorm',
+      type: 'DORM',
+      total_rooms: 20,
+      beds_per_room: 4,
+      total_beds: 80,
+      base_price_per_night: 599,
+      floor_range: '1-5',
+      amenities: ['AC', 'Shared Bathroom', 'WiFi', 'Personal Locker', 'Reading Light'],
+    },
+    {
+      id: 'rt-6dorm',
+      property_id: propertyId,
+      name: '6 Bed Mixed Dormitory',
+      slug: '6-bed-mixed-dorm',
+      type: 'DORM',
+      total_rooms: 4,
+      beds_per_room: 6,
+      total_beds: 24,
+      base_price_per_night: 449,
+      floor_range: '1-2',
+      amenities: ['AC', 'Shared Bathroom', 'WiFi', 'Personal Locker', 'Reading Light'],
+    },
+  ];
+
+  for (const rt of roomTypes) {
+    const exists = await prisma.room_types.findUnique({ where: { id: rt.id } });
+    if (!exists) {
+      await prisma.room_types.create({ data: rt });
+    }
+  }
+  console.log(`✅ Room types seeded (${roomTypes.length} types, 119 total beds)`);
+  console.log('   Queen Size Room:       15 rooms × 1 bed  = 15 beds  @ ₹1,999/night');
+  console.log('   4 Bed Mixed Dormitory: 20 rooms × 4 beds = 80 beds  @ ₹599/night');
+  console.log('   6 Bed Mixed Dormitory: 4 rooms  × 6 beds = 24 beds  @ ₹449/night');
+
+  // ─── 8. PRODUCT CATALOG ──────────────────────────────────────────────────
   const products = [
     // ── COMMODITIES (physical, chargeable) ──
     { id: 'prod-water-bottle',  name: 'Water Bottle',  category: 'COMMODITY',  price: 100, desc: 'Sealed 1L drinking water bottle' },

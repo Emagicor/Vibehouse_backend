@@ -3,7 +3,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   // Increase JSON body limit for base64 image uploads (OCR test endpoint).
   // A 5 MB image → ~7 MB base64; 15 MB gives comfortable headroom.

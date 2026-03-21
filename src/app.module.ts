@@ -8,9 +8,11 @@ import { AdminUsersModule } from './admin/users/admin-users.module';
 import { GuestAuthModule } from './guest/auth/guest-auth.module';
 import { AdminInventoryModule } from './admin/inventory/admin-inventory.module';
 import { AdminKycModule } from './admin/kyc/admin-kyc.module';
+import { AdminBookingsModule } from './admin/bookings/admin-bookings.module';
 import { GuestStoreModule } from './guest/store/guest-store.module';
 import { GuestBookingModule } from './guest/booking/guest-booking.module';
 import { GuestKycModule } from './guest/kyc/guest-kyc.module';
+import { PaymentModule } from './payment/payment.module';
 
 @Module({
   imports: [
@@ -23,9 +25,11 @@ import { GuestKycModule } from './guest/kyc/guest-kyc.module';
     GuestAuthModule,
     AdminInventoryModule,
     AdminKycModule,
+    AdminBookingsModule,
     GuestStoreModule,
     GuestBookingModule,
     GuestKycModule,
+    PaymentModule,
   ],
 })
 export class AppModule {}

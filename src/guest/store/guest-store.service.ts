@@ -417,11 +417,14 @@ export class GuestStoreService {
   // ─── CHECKOUT / PAY ───────────────────────────────────────────────────────
 
   /**
-   * Simulated payment: marks PENDING cart → PAID, creates payment record,
-   * decrements inventory for COMMODITY items.
+   * Returns cart summary for checkout. Actual payment is handled by PaymentModule:
+   *   POST /payment/create-order  → creates Razorpay order
+   *   POST /payment/verify        → verifies payment after Razorpay checkout
+   *   POST /webhook/razorpay      → webhook backup
+   *   POST /payment/dev/simulate-capture → local dev testing
    */
   async checkout(guest: GuestJwtPayload, eri: string) {
-    const booking = await this.verifyBookingAccess(guest.guest_id, eri);
+    await this.verifyBookingAccess(guest.guest_id, eri);
 
     const cart = await this.prisma.addon_orders.findFirst({
       where: {
@@ -445,64 +448,20 @@ export class GuestStoreService {
       0,
     );
 
-    // Stock validation pass
-    for (const item of cart.addon_order_items) {
-      if (item.product_catalog.category === 'COMMODITY') {
-        const inv = await this.prisma.inventory.findFirst({
-          where: { product_id: item.product_id, property_id: booking.property_id },
-        });
-        if (!inv || inv.available_stock < item.quantity) {
-          throw new BadRequestException(
-            `Insufficient stock for "${item.product_catalog.name}". Available: ${inv?.available_stock ?? 0}`,
-          );
-        }
-      }
-    }
-
-    // Create simulated payment record
-    const paymentId = uuidv4();
-    await this.prisma.payments.create({
-      data: {
-        id: paymentId,
-        ezee_reservation_id: eri,
-        guest_id: guest.guest_id,
-        razorpay_order_id: `SIM-${paymentId.slice(0, 8)}`,
-        razorpay_payment_id: `SIM-PAY-${paymentId.slice(0, 8)}`,
-        amount: total,
-        currency: 'INR',
-        purpose: 'addon_upsell',
-        status: 'CAPTURED',
-      },
-    });
-
-    // Update order status and link payment
-    await this.prisma.addon_orders.update({
-      where: { id: cart.id },
-      data: { status: 'PAID', payment_id: paymentId },
-    });
-
-    // Decrement inventory for COMMODITY items
-    for (const item of cart.addon_order_items) {
-      if (item.product_catalog.category === 'COMMODITY') {
-        await this.prisma.inventory.updateMany({
-          where: { product_id: item.product_id, property_id: booking.property_id },
-          data: {
-            available_stock: { decrement: item.quantity },
-            sold_count: { increment: item.quantity },
-          },
-        });
-      }
-    }
-
-    // Invalidate catalog/stock cache after stock changes
-    await this.cacheService.invalidatePropertyCache(booking.property_id);
-
     return {
-      message: 'Payment successful',
+      message: 'Cart ready for payment. Call POST /payment/create-order to proceed.',
       order_id: cart.id,
-      payment_id: paymentId,
+      ezee_reservation_id: eri,
       total,
-      items_count: cart.addon_order_items.length,
+      items: cart.addon_order_items.map((i) => ({
+        id: i.id,
+        product: i.product_catalog.name,
+        category: i.product_catalog.category,
+        quantity: i.quantity,
+        unit_price: Number(i.unit_price),
+        total_price: Number(i.total_price),
+      })),
+      next_step: 'POST /payment/create-order { "ezee_reservation_id": "' + eri + '" }',
     };
   }
 
