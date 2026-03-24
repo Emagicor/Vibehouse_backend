@@ -13,6 +13,8 @@ import { RestockDto } from './dto/restock.dto';
 import { DamageDto } from './dto/damage.dto';
 import { UpdateStockDto } from './dto/update-stock.dto';
 import { BorrowableCheckoutDto } from './dto/borrowable-checkout.dto';
+import { ReturnableIssueDto } from './dto/returnable-issue.dto';
+import { ReturnableReturnDto } from './dto/returnable-return.dto';
 import type { AdminJwtPayload } from '../../common/guards/admin-jwt.strategy';
 
 @Injectable()
@@ -672,6 +674,386 @@ export class AdminInventoryService {
       low_stock_threshold: i.low_stock_threshold,
       is_low_stock: i.available_stock <= i.low_stock_threshold,
       updated_at: i.updated_at,
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // RETURNABLE ITEMS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * List all RETURNABLE products with inventory + active checkouts.
+   */
+  async listReturnableInventory(actor: AdminJwtPayload) {
+    const propertyId = actor.property_id ?? 'prop-bandra-001';
+
+    const items = await this.prisma.inventory.findMany({
+      where: {
+        property_id: propertyId,
+        product_catalog: { category: 'RETURNABLE', is_active: true },
+      },
+      include: {
+        product_catalog: true,
+        returnable_checkouts: {
+          where: { status: 'ISSUED' },
+          include: {
+            guests: { select: { id: true, name: true, email: true, phone: true } },
+            ezee_booking_cache: { select: { ezee_reservation_id: true, room_number: true, room_type_name: true } },
+          },
+          orderBy: { issued_at: 'desc' },
+        },
+      },
+    });
+
+    return items.map((inv) => ({
+      inventory_id: inv.id,
+      product_id: inv.product_id,
+      product_name: inv.product_catalog.name,
+      base_price: Number(inv.product_catalog.base_price),
+      total_stock: inv.total_stock,
+      available_stock: inv.available_stock,
+      borrowed_out_count: inv.borrowed_out_count,
+      damaged_count: inv.damaged_count,
+      low_stock_threshold: inv.low_stock_threshold,
+      is_low_stock: inv.available_stock <= inv.low_stock_threshold,
+      active_checkouts: inv.returnable_checkouts.map((c) => ({
+        id: c.id,
+        guest: c.guests,
+        booking: c.ezee_booking_cache,
+        quantity: c.quantity,
+        unit_code: c.unit_code,
+        issued_at: c.issued_at,
+        status: c.status,
+      })),
+    }));
+  }
+
+  /**
+   * 7-day demand forecast for a specific RETURNABLE product.
+   * Shows per-day: new demand (check-ins with this item), expected returns (check-outs),
+   * currently issued, and projected availability.
+   */
+  async getReturnableForecast(productId: string, days: number, actor: AdminJwtPayload) {
+    const propertyId = actor.property_id ?? 'prop-bandra-001';
+
+    // Get inventory for this product
+    const inv = await this.prisma.inventory.findFirst({
+      where: { product_id: productId, property_id: propertyId },
+      include: { product_catalog: true },
+    });
+    if (!inv) throw new Error('Inventory not found');
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const forecast: {
+      date: string;
+      new_demand: number;
+      expected_returns: number;
+      currently_issued: number;
+      projected_available: number;
+      status: 'ok' | 'warning' | 'shortage';
+    }[] = [];
+
+    // Currently issued count (baseline)
+    const currentlyIssued = await this.prisma.returnable_checkouts.count({
+      where: { inventory_id: inv.id, status: 'ISSUED' },
+    });
+
+    for (let d = 0; d < days; d++) {
+      const date = new Date(today);
+      date.setDate(date.getDate() + d);
+      const nextDate = new Date(date);
+      nextDate.setDate(nextDate.getDate() + 1);
+
+      // New demand: bookings checking in on this date that have PAID orders for this product
+      const newDemandItems = await this.prisma.addon_order_items.findMany({
+        where: {
+          product_id: productId,
+          addon_orders: {
+            status: 'PAID',
+            ezee_booking_cache: {
+              property_id: propertyId,
+              checkin_date: { gte: date, lt: nextDate },
+            },
+          },
+        },
+      });
+      const newDemand = newDemandItems.reduce((sum, i) => sum + i.quantity, 0);
+
+      // Expected returns: bookings checking out on this date that have ISSUED returnable_checkouts for this product
+      const returningCheckouts = await this.prisma.returnable_checkouts.findMany({
+        where: {
+          inventory_id: inv.id,
+          status: 'ISSUED',
+          ezee_booking_cache: {
+            checkout_date: { gte: date, lt: nextDate },
+          },
+        },
+      });
+      const expectedReturns = returningCheckouts.reduce((sum, c) => sum + c.quantity, 0);
+
+      // Projected: start with current state, accumulate changes day by day
+      // For day 0: projected = available_stock - new_demand + expected_returns
+      // For day N: we'd need cumulative, but a simple per-day view is more useful
+      const effectiveStock = inv.total_stock - inv.damaged_count;
+      const projectedIssued = currentlyIssued + newDemand - expectedReturns;
+      const projectedAvailable = effectiveStock - projectedIssued;
+
+      let status: 'ok' | 'warning' | 'shortage' = 'ok';
+      if (projectedAvailable <= 0) status = 'shortage';
+      else if (projectedAvailable <= inv.low_stock_threshold) status = 'warning';
+
+      forecast.push({
+        date: date.toISOString().split('T')[0],
+        new_demand: newDemand,
+        expected_returns: expectedReturns,
+        currently_issued: d === 0 ? currentlyIssued : projectedIssued,
+        projected_available: Math.max(0, projectedAvailable),
+        status,
+      });
+    }
+
+    return {
+      product_id: productId,
+      product_name: inv.product_catalog.name,
+      total_stock: inv.total_stock,
+      damaged_count: inv.damaged_count,
+      effective_stock: inv.total_stock - inv.damaged_count,
+      forecast,
+    };
+  }
+
+  /**
+   * Get returnable entitlements for a booking: what RETURNABLE items
+   * were paid for, how many have been issued, how many pending.
+   */
+  async getReturnableEntitlements(eri: string) {
+    const orders = await this.prisma.addon_orders.findMany({
+      where: { ezee_reservation_id: eri, status: 'PAID' },
+      include: {
+        addon_order_items: {
+          include: { product_catalog: true },
+        },
+      },
+    });
+
+    const returnableItems = orders.flatMap((o) =>
+      o.addon_order_items.filter((i) => i.product_catalog.category === 'RETURNABLE'),
+    );
+
+    if (returnableItems.length === 0) return [];
+
+    const itemIds = returnableItems.map((i) => i.id);
+    const checkouts = await this.prisma.returnable_checkouts.findMany({
+      where: { addon_order_item_id: { in: itemIds } },
+    });
+
+    return returnableItems.map((item) => {
+      const issued = checkouts.filter((c) => c.addon_order_item_id === item.id);
+      const issuedQty = issued.reduce((s, c) => s + c.quantity, 0);
+      return {
+        addon_order_item_id: item.id,
+        product_id: item.product_id,
+        product_name: item.product_catalog.name,
+        ordered_quantity: item.quantity,
+        issued_quantity: issuedQty,
+        pending_quantity: item.quantity - issuedQty,
+        checkouts: issued.map((c) => ({
+          id: c.id,
+          quantity: c.quantity,
+          status: c.status,
+          issued_at: c.issued_at,
+          returned_at: c.returned_at,
+          condition_on_return: c.condition_on_return,
+        })),
+      };
+    });
+  }
+
+  /**
+   * Issue a returnable item to a guest at check-in.
+   * Validates entitlement (guest paid for it) and available stock.
+   */
+  async returnableIssue(
+    productId: string,
+    dto: ReturnableIssueDto,
+    actor: AdminJwtPayload,
+  ) {
+    const propertyId = actor.property_id ?? 'prop-bandra-001';
+    const quantity = dto.quantity ?? 1;
+
+    // 1. Validate product is RETURNABLE
+    const product = await this.prisma.product_catalog.findFirst({
+      where: { id: productId, category: 'RETURNABLE', is_active: true },
+    });
+    if (!product) throw new NotFoundException('Returnable product not found');
+
+    // 2. Validate inventory
+    const inventory = await this.prisma.inventory.findFirst({
+      where: { product_id: productId, property_id: propertyId },
+    });
+    if (!inventory) throw new NotFoundException('Inventory not found');
+    if (inventory.available_stock < quantity) {
+      throw new BadRequestException(
+        `Insufficient stock for "${product.name}". Available: ${inventory.available_stock}`,
+      );
+    }
+
+    // 3. Validate entitlement (guest paid for this item)
+    const orderItem = await this.prisma.addon_order_items.findUnique({
+      where: { id: dto.addon_order_item_id },
+      include: { addon_orders: true },
+    });
+    if (!orderItem || orderItem.product_id !== productId) {
+      throw new BadRequestException('Order item does not match this product');
+    }
+    if (orderItem.addon_orders.status !== 'PAID') {
+      throw new BadRequestException('Order is not paid');
+    }
+    if (orderItem.addon_orders.guest_id !== dto.guest_id) {
+      throw new BadRequestException('Order does not belong to this guest');
+    }
+
+    // 4. Check not over-issuing
+    const existingCheckouts = await this.prisma.returnable_checkouts.findMany({
+      where: { addon_order_item_id: dto.addon_order_item_id },
+    });
+    const alreadyIssued = existingCheckouts.reduce((s, c) => s + c.quantity, 0);
+    if (alreadyIssued + quantity > orderItem.quantity) {
+      throw new BadRequestException(
+        `Cannot issue ${quantity} — already issued ${alreadyIssued} of ${orderItem.quantity} ordered`,
+      );
+    }
+
+    // 5. Issue in transaction
+    const checkoutId = uuidv4();
+    await this.prisma.$transaction([
+      this.prisma.returnable_checkouts.create({
+        data: {
+          id: checkoutId,
+          inventory_id: inventory.id,
+          addon_order_item_id: dto.addon_order_item_id,
+          ezee_reservation_id: dto.ezee_reservation_id,
+          guest_id: dto.guest_id,
+          unit_code: orderItem.unit_code,
+          quantity,
+          status: 'ISSUED',
+          issued_by_admin_id: actor.admin_id,
+        },
+      }),
+      this.prisma.inventory.update({
+        where: { id: inventory.id },
+        data: {
+          available_stock: { decrement: quantity },
+          borrowed_out_count: { increment: quantity },
+        },
+      }),
+      this.prisma.admin_activity_log.create({
+        data: {
+          id: uuidv4(),
+          actor_type: 'ADMIN',
+          actor_id: actor.admin_id,
+          action: 'RETURNABLE_ISSUED',
+          entity_type: 'returnable_checkout',
+          entity_id: checkoutId,
+          new_value: {
+            product: product.name,
+            guest_id: dto.guest_id,
+            eri: dto.ezee_reservation_id,
+            quantity,
+          },
+        },
+      }),
+    ]);
+
+    await this.cacheService.invalidatePropertyCache(propertyId);
+
+    return {
+      message: `Issued ${quantity}x ${product.name}`,
+      checkout_id: checkoutId,
+      product: product.name,
+      quantity,
+      remaining_stock: inventory.available_stock - quantity,
+    };
+  }
+
+  /**
+   * Verify return of a returnable item.
+   * GOOD → stock restored. DAMAGED/LOST → stock NOT restored, damaged_count++.
+   */
+  async returnableVerifyReturn(
+    checkoutId: string,
+    dto: ReturnableReturnDto,
+    actor: AdminJwtPayload,
+  ) {
+    const checkout = await this.prisma.returnable_checkouts.findUnique({
+      where: { id: checkoutId },
+      include: { inventory: { include: { product_catalog: true } } },
+    });
+
+    if (!checkout) throw new NotFoundException('Returnable checkout not found');
+    if (checkout.status !== 'ISSUED') {
+      throw new BadRequestException(`Item already ${checkout.status}`);
+    }
+
+    const propertyId = checkout.inventory.property_id;
+    const newStatus = dto.condition === 'LOST' ? 'LOST' : 'RETURNED';
+
+    const inventoryUpdates: Record<string, any> = {
+      borrowed_out_count: { decrement: checkout.quantity },
+    };
+
+    if (dto.condition === 'GOOD') {
+      // Item returned in good shape → restore to available stock
+      inventoryUpdates.available_stock = { increment: checkout.quantity };
+    } else {
+      // DAMAGED or LOST → unit removed from circulation
+      inventoryUpdates.damaged_count = { increment: checkout.quantity };
+      inventoryUpdates.total_stock = { decrement: checkout.quantity };
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.returnable_checkouts.update({
+        where: { id: checkoutId },
+        data: {
+          status: newStatus,
+          returned_at: new Date(),
+          condition_on_return: dto.condition,
+          returned_verified_by_admin_id: actor.admin_id,
+          notes: dto.notes ?? null,
+        },
+      }),
+      this.prisma.inventory.update({
+        where: { id: checkout.inventory_id },
+        data: inventoryUpdates,
+      }),
+      this.prisma.admin_activity_log.create({
+        data: {
+          id: uuidv4(),
+          actor_type: 'ADMIN',
+          actor_id: actor.admin_id,
+          action: 'RETURNABLE_RETURN_VERIFIED',
+          entity_type: 'returnable_checkout',
+          entity_id: checkoutId,
+          new_value: {
+            product: checkout.inventory.product_catalog.name,
+            condition: dto.condition,
+            quantity: checkout.quantity,
+            notes: dto.notes,
+          },
+        },
+      }),
+    ]);
+
+    await this.cacheService.invalidatePropertyCache(propertyId);
+
+    return {
+      message: `Return verified (${dto.condition})`,
+      checkout_id: checkoutId,
+      product: checkout.inventory.product_catalog.name,
+      condition: dto.condition,
+      status: newStatus,
     };
   }
 }

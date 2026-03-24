@@ -134,6 +134,18 @@ export class GuestStoreController {
     return this.storeService.requestFreeService(guest, eri, dto);
   }
 
+  // ─── RETURNABLES ─────────────────────────────────────────────────────
+
+  /** List my returnable item entitlements + issuance status for a booking. */
+  @UseGuards(GuestJwtGuard)
+  @Get(':eri/returnables/mine')
+  getMyReturnables(
+    @CurrentGuest() guest: GuestJwtPayload,
+    @Param('eri') eri: string,
+  ) {
+    return this.storeService.getMyReturnables(guest.guest_id, eri);
+  }
+
   // ─── ORDER HISTORY ────────────────────────────────────────────────────
 
   /** Get all orders for a booking. */

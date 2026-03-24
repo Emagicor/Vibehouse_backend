@@ -13,6 +13,8 @@ import { GuestStoreModule } from './guest/store/guest-store.module';
 import { GuestBookingModule } from './guest/booking/guest-booking.module';
 import { GuestKycModule } from './guest/kyc/guest-kyc.module';
 import { PaymentModule } from './payment/payment.module';
+import { AdminEventsModule } from './admin/events/admin-events.module';
+import { PublicModule } from './public/public.module';
 
 @Module({
   imports: [
@@ -26,10 +28,12 @@ import { PaymentModule } from './payment/payment.module';
     AdminInventoryModule,
     AdminKycModule,
     AdminBookingsModule,
+    AdminEventsModule,
     GuestStoreModule,
     GuestBookingModule,
     GuestKycModule,
     PaymentModule,
+    PublicModule,
   ],
 })
 export class AppModule {}

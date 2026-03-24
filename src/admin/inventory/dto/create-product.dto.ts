@@ -17,7 +17,7 @@ export class CreateProductDto {
   description?: string;
 
   @IsNotEmpty()
-  @IsIn(['COMMODITY', 'SERVICE', 'BORROWABLE'])
+  @IsIn(['COMMODITY', 'SERVICE', 'BORROWABLE', 'RETURNABLE'])
   category: string;
 
   @IsNumber()

@@ -1,13 +1,17 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import {
   S3Client,
   PutObjectCommand,
+  GetObjectCommand,
+  PutBucketCorsCommand,
+  GetBucketCorsCommand,
 } from '@aws-sdk/client-s3';
+import type { Readable } from 'stream';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuidv4 } from 'uuid';
 
 @Injectable()
-export class S3Service {
+export class S3Service implements OnModuleInit {
   private readonly logger = new Logger(S3Service.name);
   private readonly s3: S3Client;
   private readonly bucket: string;
@@ -24,6 +28,52 @@ export class S3Service {
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? '',
       },
     });
+  }
+
+  async onModuleInit() {
+    await this.ensureCorsConfig();
+  }
+
+  /**
+   * Ensure the S3 bucket has CORS configured for browser uploads.
+   */
+  private async ensureCorsConfig() {
+    try {
+      const existing = await this.s3.send(
+        new GetBucketCorsCommand({ Bucket: this.bucket }),
+      );
+      if (existing.CORSRules && existing.CORSRules.length > 0) {
+        this.logger.log('S3 CORS already configured');
+        return;
+      }
+    } catch (err: any) {
+      if (err.name !== 'NoSuchCORSConfiguration') {
+        this.logger.warn(`Could not check S3 CORS: ${err.message}`);
+        return;
+      }
+    }
+
+    try {
+      await this.s3.send(
+        new PutBucketCorsCommand({
+          Bucket: this.bucket,
+          CORSConfiguration: {
+            CORSRules: [
+              {
+                AllowedOrigins: ['*'],
+                AllowedMethods: ['GET', 'PUT', 'POST', 'HEAD'],
+                AllowedHeaders: ['*'],
+                ExposeHeaders: ['ETag'],
+                MaxAgeSeconds: 3600,
+              },
+            ],
+          },
+        }),
+      );
+      this.logger.log('S3 CORS configured successfully');
+    } catch (err: any) {
+      this.logger.warn(`Failed to set S3 CORS (set it manually): ${err.message}`);
+    }
   }
 
   /**
@@ -54,6 +104,80 @@ export class S3Service {
       uploadUrl,
       fileKey,
       expiresInSeconds: expiresIn,
+    };
+  }
+
+  /**
+   * Generate a presigned PUT URL for a custom path prefix.
+   * Used for event posters, etc.
+   */
+  async getPresignedUploadUrlForPath(
+    pathPrefix: string,
+    fileName: string,
+    contentType: string,
+  ): Promise<{ uploadUrl: string; fileKey: string; fileUrl: string; expiresInSeconds: number }> {
+    const ext = fileName.split('.').pop() ?? 'jpg';
+    const uniqueId = uuidv4().slice(0, 8);
+    const fileKey = `${pathPrefix}/${uniqueId}.${ext}`;
+    const expiresIn = 300;
+
+    const command = new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: fileKey,
+      ContentType: contentType,
+    });
+
+    const uploadUrl = await getSignedUrl(this.s3, command, { expiresIn });
+
+    this.logger.log(`Presigned URL generated for key: ${fileKey}`);
+
+    return {
+      uploadUrl,
+      fileKey,
+      fileUrl: this.buildFileUrl(fileKey),
+      expiresInSeconds: expiresIn,
+    };
+  }
+
+  /**
+   * Upload a file buffer to S3 (server-side, no CORS needed).
+   */
+  async uploadFile(
+    pathPrefix: string,
+    fileName: string,
+    contentType: string,
+    buffer: Buffer,
+  ): Promise<{ fileKey: string; fileUrl: string }> {
+    const ext = fileName.split('.').pop() ?? 'jpg';
+    const uniqueId = uuidv4().slice(0, 8);
+    const fileKey = `${pathPrefix}/${uniqueId}.${ext}`;
+
+    await this.s3.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: fileKey,
+        ContentType: contentType,
+        Body: buffer,
+      }),
+    );
+
+    this.logger.log(`File uploaded: ${fileKey}`);
+
+    return { fileKey, fileUrl: this.buildFileUrl(fileKey) };
+  }
+
+  /**
+   * Stream an S3 object by key (for proxying images to the browser).
+   */
+  async getObjectStream(
+    key: string,
+  ): Promise<{ stream: Readable; contentType: string }> {
+    const response = await this.s3.send(
+      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+    );
+    return {
+      stream: response.Body as Readable,
+      contentType: response.ContentType ?? 'application/octet-stream',
     };
   }
 

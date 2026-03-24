@@ -8,15 +8,16 @@ datasource db {
 }
 
 model addon_order_items {
-  id              String          @id @db.VarChar(36)
-  addon_order_id  String          @db.VarChar(36)
-  product_id      String          @db.VarChar(36)
-  quantity        Int             @default(1)
-  unit_price      Decimal         @db.Decimal(10, 2)
-  total_price     Decimal         @db.Decimal(10, 2)
-  unit_code       String?         @db.VarChar(20)
-  addon_orders    addon_orders    @relation(fields: [addon_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  product_catalog product_catalog @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  id                   String                 @id @db.VarChar(36)
+  addon_order_id       String                 @db.VarChar(36)
+  product_id           String                 @db.VarChar(36)
+  quantity             Int                    @default(1)
+  unit_price           Decimal                @db.Decimal(10, 2)
+  total_price          Decimal                @db.Decimal(10, 2)
+  unit_code            String?                @db.VarChar(20)
+  addon_orders         addon_orders           @relation(fields: [addon_order_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  product_catalog      product_catalog        @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  returnable_checkouts returnable_checkouts[]
 }
 
 model addon_orders {
@@ -64,22 +65,25 @@ model admin_roles {
 }
 
 model admin_users {
-  id                   String                 @id @db.VarChar(36)
-  name                 String                 @db.VarChar(255)
-  email                String                 @unique @db.VarChar(255)
-  phone                String?                @db.VarChar(20)
-  password_hash        String                 @db.VarChar(255)
-  role_id              String                 @db.VarChar(36)
-  property_id          String?                @db.VarChar(36)
-  is_active            Boolean                @default(true)
-  two_fa_enabled       Boolean                @default(false)
-  two_fa_secret        String?                @db.VarChar(255)
-  last_login_at        DateTime?              @db.Timestamp(6)
-  created_at           DateTime               @default(now()) @db.Timestamp(6)
-  updated_at           DateTime               @default(now()) @db.Timestamp(6)
-  properties           properties?            @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  admin_roles          admin_roles            @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  borrowable_checkouts borrowable_checkouts[]
+  id                                                                                   String                 @id @db.VarChar(36)
+  name                                                                                 String                 @db.VarChar(255)
+  email                                                                                String                 @unique @db.VarChar(255)
+  phone                                                                                String?                @db.VarChar(20)
+  password_hash                                                                        String                 @db.VarChar(255)
+  role_id                                                                              String                 @db.VarChar(36)
+  property_id                                                                          String?                @db.VarChar(36)
+  is_active                                                                            Boolean                @default(true)
+  two_fa_enabled                                                                       Boolean                @default(false)
+  two_fa_secret                                                                        String?                @db.VarChar(255)
+  last_login_at                                                                        DateTime?              @db.Timestamp(6)
+  created_at                                                                           DateTime               @default(now()) @db.Timestamp(6)
+  updated_at                                                                           DateTime               @default(now()) @db.Timestamp(6)
+  properties                                                                           properties?            @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  admin_roles                                                                          admin_roles            @relation(fields: [role_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  borrowable_checkouts                                                                 borrowable_checkouts[]
+  events                                                                               events[]
+  returnable_checkouts_returnable_checkouts_issued_by_admin_idToadmin_users            returnable_checkouts[] @relation("returnable_checkouts_issued_by_admin_idToadmin_users")
+  returnable_checkouts_returnable_checkouts_returned_verified_by_admin_idToadmin_users returnable_checkouts[] @relation("returnable_checkouts_returned_verified_by_admin_idToadmin_users")
 
   @@index([email, is_active], map: "idx_admin_users_email_active")
   @@index([role_id], map: "idx_admin_users_role")
@@ -171,6 +175,30 @@ model checkin_records {
   @@index([ezee_reservation_id], map: "idx_checkin_reservation")
 }
 
+model events {
+  id           String       @id @db.VarChar(36)
+  property_id  String       @db.VarChar(36)
+  title        String       @db.VarChar(200)
+  description  String?
+  date         DateTime     @db.Date
+  time         String?      @db.VarChar(10)
+  location     String?      @db.VarChar(200)
+  capacity     Int?
+  price_text   String?      @db.VarChar(100)
+  contact_link String?      @db.VarChar(500)
+  poster_url   String?      @db.VarChar(500)
+  badge_label  String?      @db.VarChar(30)
+  badge_color  String?      @db.VarChar(10)
+  is_active    Boolean      @default(true)
+  created_by   String?      @db.VarChar(36)
+  created_at   DateTime     @default(now()) @db.Timestamp(6)
+  updated_at   DateTime     @default(now()) @db.Timestamp(6)
+  admin_users  admin_users? @relation(fields: [created_by], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  properties   properties   @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([property_id, date], map: "idx_events_property_date")
+}
+
 model ezee_booking_cache {
   ezee_reservation_id  String                 @id @db.VarChar(100)
   property_id          String                 @db.VarChar(36)
@@ -197,6 +225,7 @@ model ezee_booking_cache {
   properties           properties             @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   kyc_submissions      kyc_submissions[]
   payments             payments[]
+  returnable_checkouts returnable_checkouts[]
   smart_lock_access    smart_lock_access[]
   stay_extensions      stay_extensions[]
   zoho_ticket_ref      zoho_ticket_ref[]
@@ -256,6 +285,7 @@ model guests {
   notification_log                                                       notification_log[]
   otp_logs                                                               otp_logs[]
   payments                                                               payments[]
+  returnable_checkouts                                                   returnable_checkouts[]
   smart_lock_access                                                      smart_lock_access[]
   stay_extensions                                                        stay_extensions[]
   zoho_ticket_ref                                                        zoho_ticket_ref[]
@@ -276,6 +306,7 @@ model inventory {
   borrowable_checkouts borrowable_checkouts[]
   product_catalog      product_catalog        @relation(fields: [product_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   properties           properties             @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  returnable_checkouts returnable_checkouts[]
 
   @@unique([property_id, product_id])
   @@index([property_id, product_id], map: "idx_inventory_product")
@@ -417,6 +448,7 @@ model properties {
   branding_config    Json?
   created_at         DateTime             @default(now()) @db.Timestamp(6)
   admin_users        admin_users[]
+  events             events[]
   ezee_booking_cache ezee_booking_cache[]
   ezee_connection    ezee_connection[]
   inventory          inventory[]
@@ -425,6 +457,33 @@ model properties {
   product_catalog    product_catalog[]
   room_types         room_types[]
   sla_config         sla_config[]
+}
+
+model returnable_checkouts {
+  id                                                                          String             @id @db.VarChar(36)
+  inventory_id                                                                String             @db.VarChar(36)
+  addon_order_item_id                                                         String             @db.VarChar(36)
+  ezee_reservation_id                                                         String             @db.VarChar(100)
+  guest_id                                                                    String             @db.VarChar(36)
+  unit_code                                                                   String?            @db.VarChar(20)
+  quantity                                                                    Int                @default(1)
+  issued_at                                                                   DateTime           @default(now()) @db.Timestamp(6)
+  returned_at                                                                 DateTime?          @db.Timestamp(6)
+  returned_verified_by_admin_id                                               String?            @db.VarChar(36)
+  condition_on_return                                                         String?            @db.VarChar(15)
+  status                                                                      String             @default("ISSUED") @db.VarChar(15)
+  issued_by_admin_id                                                          String?            @db.VarChar(36)
+  notes                                                                       String?
+  addon_order_items                                                           addon_order_items  @relation(fields: [addon_order_item_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  ezee_booking_cache                                                          ezee_booking_cache @relation(fields: [ezee_reservation_id], references: [ezee_reservation_id], onDelete: NoAction, onUpdate: NoAction)
+  guests                                                                      guests             @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  inventory                                                                   inventory          @relation(fields: [inventory_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  admin_users_returnable_checkouts_issued_by_admin_idToadmin_users            admin_users?       @relation("returnable_checkouts_issued_by_admin_idToadmin_users", fields: [issued_by_admin_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  admin_users_returnable_checkouts_returned_verified_by_admin_idToadmin_users admin_users?       @relation("returnable_checkouts_returned_verified_by_admin_idToadmin_users", fields: [returned_verified_by_admin_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([guest_id, status], map: "idx_ret_guest_status")
+  @@index([addon_order_item_id], map: "idx_ret_order_item")
+  @@index([ezee_reservation_id, status], map: "idx_ret_reservation")
 }
 
 model room_types {

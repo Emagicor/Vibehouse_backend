@@ -74,7 +74,7 @@ export class GuestStoreService {
       where: {
         property_id: propertyId,
         is_active: true,
-        category: { in: ['COMMODITY', 'SERVICE'] },
+        category: { in: ['COMMODITY', 'SERVICE', 'RETURNABLE'] },
         base_price: { gt: 0 },
       },
       select: {
@@ -679,5 +679,55 @@ export class GuestStoreService {
       })),
       total: o.addon_order_items.reduce((s, i) => s + Number(i.total_price), 0),
     }));
+  }
+
+  // ─── MY RETURNABLES ───────────────────────────────────────────────────────
+
+  /**
+   * Returns the guest's returnable item entitlements for a booking:
+   * what they paid for (RETURNABLE items in PAID orders) + issuance status.
+   */
+  async getMyReturnables(guestId: string, eri: string) {
+    await this.verifyBookingAccess(guestId, eri);
+
+    // Get all PAID addon_order_items for RETURNABLE products on this booking
+    const orders = await this.prisma.addon_orders.findMany({
+      where: { ezee_reservation_id: eri, guest_id: guestId, status: 'PAID' },
+      include: {
+        addon_order_items: {
+          include: { product_catalog: true },
+          where: { product_catalog: { category: 'RETURNABLE' } },
+        },
+      },
+    });
+
+    const items = orders.flatMap((o) => o.addon_order_items);
+    if (items.length === 0) return [];
+
+    // Get issuance records
+    const itemIds = items.map((i) => i.id);
+    const checkouts = await this.prisma.returnable_checkouts.findMany({
+      where: { addon_order_item_id: { in: itemIds } },
+    });
+
+    return items.map((item) => {
+      const issued = checkouts.filter((c) => c.addon_order_item_id === item.id);
+      const issuedQty = issued.reduce((s, c) => s + c.quantity, 0);
+      const activeCheckouts = issued.filter((c) => c.status === 'ISSUED');
+      return {
+        addon_order_item_id: item.id,
+        product_id: item.product_id,
+        product_name: item.product_catalog.name,
+        ordered_quantity: item.quantity,
+        issued_quantity: issuedQty,
+        pending_quantity: item.quantity - issuedQty,
+        active_checkouts: activeCheckouts.map((c) => ({
+          id: c.id,
+          quantity: c.quantity,
+          issued_at: c.issued_at,
+          status: c.status,
+        })),
+      };
+    });
   }
 }

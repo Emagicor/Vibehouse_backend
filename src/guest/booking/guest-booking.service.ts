@@ -517,6 +517,8 @@ export class GuestBookingService {
         throw new BadRequestException(`"${product.name}" is a free service — no need to add to cart`);
       }
 
+      // RETURNABLE items: no stock reservation at booking (allocated at check-in)
+      // COMMODITY items: validate available stock now
       if (product.category === 'COMMODITY') {
         const inv = await this.prisma.inventory.findFirst({
           where: { product_id: product.id, property_id: propertyId },

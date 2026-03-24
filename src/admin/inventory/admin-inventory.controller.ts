@@ -16,6 +16,8 @@ import { RestockDto } from './dto/restock.dto';
 import { DamageDto } from './dto/damage.dto';
 import { UpdateStockDto } from './dto/update-stock.dto';
 import { BorrowableCheckoutDto } from './dto/borrowable-checkout.dto';
+import { ReturnableIssueDto } from './dto/returnable-issue.dto';
+import { ReturnableReturnDto } from './dto/returnable-return.dto';
 import { AdminJwtGuard } from '../../common/guards/admin-jwt.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -148,5 +150,49 @@ export class AdminInventoryController {
     @CurrentAdmin() actor: AdminJwtPayload,
   ) {
     return this.inventoryService.verifyReturn(id, staffId || actor.admin_id, actor);
+  }
+
+  // ──── RETURNABLE TRACKING ───────────────────────────────────────────────
+
+  @Get('returnables')
+  @RequirePermission('returnable.manage')
+  listReturnableInventory(@CurrentAdmin() actor: AdminJwtPayload) {
+    return this.inventoryService.listReturnableInventory(actor);
+  }
+
+  @Get('returnables/forecast/:productId')
+  @RequirePermission('returnable.manage')
+  getReturnableForecast(
+    @Param('productId') productId: string,
+    @Query('days') days: string,
+    @CurrentAdmin() actor: AdminJwtPayload,
+  ) {
+    return this.inventoryService.getReturnableForecast(productId, Math.min(Number(days) || 7, 14), actor);
+  }
+
+  @Get('returnables/entitlements/:eri')
+  @RequirePermission('returnable.manage')
+  getReturnableEntitlements(@Param('eri') eri: string) {
+    return this.inventoryService.getReturnableEntitlements(eri);
+  }
+
+  @Post('returnables/:productId/issue')
+  @RequirePermission('returnable.manage')
+  returnableIssue(
+    @Param('productId') productId: string,
+    @Body() dto: ReturnableIssueDto,
+    @CurrentAdmin() actor: AdminJwtPayload,
+  ) {
+    return this.inventoryService.returnableIssue(productId, dto, actor);
+  }
+
+  @Post('returnables/:checkoutId/return')
+  @RequirePermission('returnable.return_verify')
+  returnableVerifyReturn(
+    @Param('checkoutId') checkoutId: string,
+    @Body() dto: ReturnableReturnDto,
+    @CurrentAdmin() actor: AdminJwtPayload,
+  ) {
+    return this.inventoryService.returnableVerifyReturn(checkoutId, dto, actor);
   }
 }

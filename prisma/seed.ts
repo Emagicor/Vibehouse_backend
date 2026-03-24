@@ -42,8 +42,10 @@ async function main() {
         'admin.manage', 'admin.create',
         'financial.view', 'financial.export',
         'checkin.override', 'borrowable.manage', 'borrowable.return_verify',
+        'returnable.manage', 'returnable.return_verify',
         'maintenance.tickets',
         'bookings.view', 'bookings.create',
+        'events.view', 'events.edit',
       ],
     },
     {
@@ -58,7 +60,9 @@ async function main() {
         'orders.view', 'orders.refund',
         'devices.view', 'devices.manage',
         'admin.manage', 'admin.create',
+        'returnable.manage', 'returnable.return_verify',
         'bookings.view', 'bookings.create',
+        'events.view', 'events.edit',
       ],
     },
     {
@@ -71,7 +75,9 @@ async function main() {
         'orders.view',
         'checkin.override',
         'borrowable.manage',
+        'returnable.manage', 'returnable.return_verify',
         'bookings.view', 'bookings.create',
+        'events.view',
       ],
     },
     {
@@ -83,6 +89,7 @@ async function main() {
         'inventory.view', 'inventory.edit',
         'borrowable.manage',
         'borrowable.return_verify',
+        'returnable.manage', 'returnable.return_verify',
       ],
     },
     {
@@ -594,10 +601,10 @@ async function main() {
   const products = [
     // ── COMMODITIES (physical, chargeable) ──
     { id: 'prod-water-bottle',  name: 'Water Bottle',  category: 'COMMODITY',  price: 100, desc: 'Sealed 1L drinking water bottle' },
-    { id: 'prod-bath-towel',    name: 'Bath Towel',    category: 'COMMODITY',  price: 200, desc: 'Full-size bath towel' },
+    { id: 'prod-bath-towel',    name: 'Bath Towel',    category: 'RETURNABLE', price: 200, desc: 'Full-size bath towel (returned at checkout)' },
     { id: 'prod-safe-lock',     name: 'Safe Lock',     category: 'COMMODITY',  price: 150, desc: 'Combination lock for under-bed locker' },
     { id: 'prod-toilet-kit',    name: 'Toilet Kit',    category: 'COMMODITY',  price: 150, desc: 'Soap, shampoo, toothpaste, toothbrush' },
-    { id: 'prod-blanket',       name: 'Blanket',       category: 'COMMODITY',  price: 300, desc: 'Extra blanket for cold nights' },
+    { id: 'prod-blanket',       name: 'Blanket',       category: 'RETURNABLE', price: 300, desc: 'Extra blanket for cold nights (returned at checkout)' },
     { id: 'prod-locker',        name: 'Locker',        category: 'COMMODITY',  price: 150, desc: 'Personal locker rental' },
 
     // ── SERVICES (time-based / non-physical) ──
@@ -767,6 +774,88 @@ async function main() {
     console.log('   Hair Dryer: Aisha (FD-201)');
     console.log('   Umbrella: Vikram (P-301), Samir (D-102)');
   }
+
+  // ─── 10. SAMPLE EVENTS ──────────────────────────────────────────────────────
+  const today = new Date();
+  const sampleEvents = [
+    {
+      id: 'evt-dj-night',
+      property_id: 'prop-bandra-001',
+      title: 'Neon DJ Night',
+      description: 'Dance the night away under neon lights with our resident DJ spinning the best tracks from around the world.',
+      date: new Date(today.getFullYear(), today.getMonth(), today.getDate()),
+      time: '21:00',
+      location: 'Rooftop Terrace',
+      capacity: 50,
+      price_text: 'Free for Guests',
+      contact_link: null,
+      poster_url: null,
+      badge_label: 'Tonight',
+      badge_color: '#ff2e62',
+      is_active: true,
+      created_by: null,
+    },
+    {
+      id: 'evt-pub-crawl',
+      property_id: 'prop-bandra-001',
+      title: 'Old City Pub Crawl',
+      description: 'Explore the best bars in the neighborhood with fellow travelers. Includes welcome drink at each stop.',
+      date: new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1),
+      time: '20:30',
+      location: 'Meet at Lobby',
+      capacity: 30,
+      price_text: 'Rs. 599',
+      contact_link: 'https://wa.me/919876543210',
+      poster_url: null,
+      badge_label: 'Popular',
+      badge_color: '#facc15',
+      is_active: true,
+      created_by: null,
+    },
+    {
+      id: 'evt-live-music',
+      property_id: 'prop-bandra-001',
+      title: 'Live Local Music',
+      description: 'Enjoy an evening of live acoustic performances by local artists in our cozy common area.',
+      date: new Date(today.getFullYear(), today.getMonth(), today.getDate() + 2),
+      time: '19:00',
+      location: 'Common Area',
+      capacity: 40,
+      price_text: 'Free for Guests',
+      contact_link: null,
+      poster_url: null,
+      badge_label: 'Live',
+      badge_color: '#00d1ff',
+      is_active: true,
+      created_by: null,
+    },
+    {
+      id: 'evt-yoga-past',
+      property_id: 'prop-bandra-001',
+      title: 'Sunset Yoga',
+      description: 'Start your evening with a relaxing rooftop yoga session overlooking the city skyline.',
+      date: new Date(today.getFullYear(), today.getMonth(), today.getDate() - 5),
+      time: '17:30',
+      location: 'Rooftop Terrace',
+      capacity: 20,
+      price_text: 'Free for Guests',
+      contact_link: null,
+      poster_url: null,
+      badge_label: null,
+      badge_color: null,
+      is_active: true,
+      created_by: null,
+    },
+  ];
+
+  for (const evt of sampleEvents) {
+    await prisma.events.upsert({
+      where: { id: evt.id },
+      update: {},
+      create: evt,
+    });
+  }
+  console.log(`✅ Events seeded (${sampleEvents.length} events)`);
 
   console.log('\n🎉 Seed complete!');
 }
