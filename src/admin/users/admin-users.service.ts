@@ -12,6 +12,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../redis/cache.service';
 import { CreateAdminUserDto } from './dto/create-admin-user.dto';
 import { UpdateAdminProfileDto } from './dto/update-admin-profile.dto';
+import { SqsProducerService } from '../../sqs/sqs-producer.service';
 import { AdminJwtPayload } from '../../common/guards/admin-jwt.strategy';
 import { ROLE_HIERARCHY } from '../../common/constants/role-hierarchy';
 
@@ -20,6 +21,7 @@ export class AdminUsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cacheService: CacheService,
+    private readonly sqsProducer: SqsProducerService,
   ) {}
 
   async create(dto: CreateAdminUserDto, actor: AdminJwtPayload) {
@@ -60,16 +62,13 @@ export class AdminUsersService {
       include: { admin_roles: true },
     });
 
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'ADMIN',
-        actor_id: actor.admin_id,
-        action: 'ADMIN_CREATE',
-        entity_type: 'admin_users',
-        entity_id: id,
-        new_value: { email: dto.email, role: role.name },
-      },
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'ADMIN',
+      actor_id: actor.admin_id,
+      action: 'ADMIN_CREATE',
+      entity_type: 'admin_users',
+      entity_id: id,
+      new_value: { email: dto.email, role: role.name },
     });
 
     return {
@@ -143,17 +142,14 @@ export class AdminUsersService {
       data: { is_active: false, updated_at: new Date() },
     });
 
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'ADMIN',
-        actor_id: actor.admin_id,
-        action: 'ADMIN_DEACTIVATE',
-        entity_type: 'admin_users',
-        entity_id: id,
-        old_value: { is_active: true },
-        new_value: { is_active: false },
-      },
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'ADMIN',
+      actor_id: actor.admin_id,
+      action: 'ADMIN_DEACTIVATE',
+      entity_type: 'admin_users',
+      entity_id: id,
+      old_value: { is_active: true },
+      new_value: { is_active: false },
     });
 
     // Invalidate JWT cache so the deactivated admin is rejected immediately
@@ -224,19 +220,16 @@ export class AdminUsersService {
       include: { admin_roles: true },
     });
 
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'ADMIN',
-        actor_id: actor.admin_id,
-        action: isSelf ? 'SELF_PROFILE_UPDATE' : 'ADMIN_PROFILE_UPDATE',
-        entity_type: 'admin_users',
-        entity_id: id,
-        new_value: {
-          name: dto.name,
-          email: dto.email,
-          password_changed: !!dto.new_password,
-        },
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'ADMIN',
+      actor_id: actor.admin_id,
+      action: isSelf ? 'SELF_PROFILE_UPDATE' : 'ADMIN_PROFILE_UPDATE',
+      entity_type: 'admin_users',
+      entity_id: id,
+      new_value: {
+        name: dto.name,
+        email: dto.email,
+        password_changed: !!dto.new_password,
       },
     });
 
@@ -271,16 +264,13 @@ export class AdminUsersService {
       );
     }
 
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'ADMIN',
-        actor_id: actor.admin_id,
-        action: 'ADMIN_DELETE',
-        entity_type: 'admin_users',
-        entity_id: id,
-        old_value: { email: target.email, role: target.admin_roles.name },
-      },
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'ADMIN',
+      actor_id: actor.admin_id,
+      action: 'ADMIN_DELETE',
+      entity_type: 'admin_users',
+      entity_id: id,
+      old_value: { email: target.email, role: target.admin_roles.name },
     });
 
     await this.prisma.admin_users.delete({ where: { id } });

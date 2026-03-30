@@ -11,6 +11,7 @@ import Razorpay from 'razorpay';
 import { PrismaService } from '../prisma/prisma.service';
 import { CacheService } from '../redis/cache.service';
 import { RAZORPAY } from './razorpay.provider';
+import { SqsProducerService } from '../sqs/sqs-producer.service';
 import type { GuestJwtPayload } from '../common/guards/guest-jwt.strategy';
 
 @Injectable()
@@ -21,6 +22,7 @@ export class PaymentService {
     private readonly prisma: PrismaService,
     private readonly cacheService: CacheService,
     @Inject(RAZORPAY) private readonly razorpay: Razorpay,
+    private readonly sqsProducer: SqsProducerService,
   ) {}
 
   // ─── STEP 1: CREATE RAZORPAY ORDER ─────────────────────────────────────────
@@ -122,21 +124,18 @@ export class PaymentService {
       data: { payment_id: paymentId },
     });
 
-    // Log payment creation
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'GUEST',
-        actor_id: guest.guest_id,
-        action: 'PAYMENT_CREATED',
-        entity_type: 'payment',
-        entity_id: paymentId,
-        new_value: {
-          razorpay_order_id: rzpOrder.id,
-          amount: totalAmount,
-          addon_order_id: cart.id,
-          eri,
-        },
+    // Async audit log via SQS
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'GUEST',
+      actor_id: guest.guest_id,
+      action: 'PAYMENT_CREATED',
+      entity_type: 'payment',
+      entity_id: paymentId,
+      new_value: {
+        razorpay_order_id: rzpOrder.id,
+        amount: totalAmount,
+        addon_order_id: cart.id,
+        eri,
       },
     });
 
@@ -207,21 +206,18 @@ export class PaymentService {
       });
     }
 
-    // Log
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'GUEST',
-        actor_id: guest.guest_id,
-        action: 'BOOKING_PAYMENT_CREATED',
-        entity_type: 'payment',
-        entity_id: paymentId,
-        new_value: {
-          razorpay_order_id: rzpOrder.id,
-          amount: grandTotal,
-          eri,
-          type: 'booking',
-        },
+    // Async audit log via SQS
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'GUEST',
+      actor_id: guest.guest_id,
+      action: 'BOOKING_PAYMENT_CREATED',
+      entity_type: 'payment',
+      entity_id: paymentId,
+      new_value: {
+        razorpay_order_id: rzpOrder.id,
+        amount: grandTotal,
+        eri,
+        type: 'booking',
       },
     });
 
@@ -404,19 +400,16 @@ export class PaymentService {
     if (payment.purpose === 'booking') {
       await this.rollbackPendingBooking(payment.ezee_reservation_id);
       // Log failure
-      await this.prisma.admin_activity_log.create({
-        data: {
-          id: uuidv4(),
-          actor_type: 'SYSTEM',
-          actor_id: payment.guest_id,
-          action: 'BOOKING_PAYMENT_FAILED',
-          entity_type: 'payment',
-          entity_id: payment.id,
-          new_value: {
-            razorpay_order_id,
-            amount: Number(payment.amount),
-            eri: payment.ezee_reservation_id,
-          },
+      await this.sqsProducer.sendAuditLog({
+        actor_type: 'SYSTEM',
+        actor_id: payment.guest_id,
+        action: 'BOOKING_PAYMENT_FAILED',
+        entity_type: 'payment',
+        entity_id: payment.id,
+        new_value: {
+          razorpay_order_id,
+          amount: Number(payment.amount),
+          eri: payment.ezee_reservation_id,
         },
       });
       this.logger.log(`Booking payment ${payment.id} failed — pending booking ${payment.ezee_reservation_id} rolled back`);
@@ -433,19 +426,16 @@ export class PaymentService {
       data: { payment_id: null },
     });
 
-    // Log failure
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'SYSTEM',
-        actor_id: payment.guest_id,
-        action: 'PAYMENT_FAILED',
-        entity_type: 'payment',
-        entity_id: payment.id,
-        new_value: {
-          razorpay_order_id,
-          amount: Number(payment.amount),
-        },
+    // Async audit log via SQS
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'SYSTEM',
+      actor_id: payment.guest_id,
+      action: 'PAYMENT_FAILED',
+      entity_type: 'payment',
+      entity_id: payment.id,
+      new_value: {
+        razorpay_order_id,
+        amount: Number(payment.amount),
       },
     });
 
@@ -610,28 +600,7 @@ export class PaymentService {
         data: { status: 'PAID' },
       });
 
-      // STEP 5: Log to admin_activity_log
-      await tx.admin_activity_log.create({
-        data: {
-          id: uuidv4(),
-          actor_type: 'GUEST',
-          actor_id: payment.guest_id,
-          action: 'PAYMENT_CAPTURED',
-          entity_type: 'payment',
-          entity_id: paymentId,
-          new_value: {
-            razorpay_order_id: payment.razorpay_order_id,
-            razorpay_payment_id: razorpayPaymentId,
-            amount: Number(payment.amount),
-            order_id: order.id,
-            items: order.addon_order_items.map((i) => ({
-              product: i.product_catalog.name,
-              quantity: i.quantity,
-              total: Number(i.total_price),
-            })),
-          },
-        },
-      });
+      // STEP 5: Audit log moved outside transaction (goes to SQS)
 
       return null; // success — no conflict
     }, {
@@ -643,6 +612,36 @@ export class PaymentService {
 
     // Invalidate cache outside transaction
     await this.cacheService.invalidatePropertyCache(booking.property_id);
+
+    // Async audit log + payment success event via SQS
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'GUEST',
+      actor_id: payment.guest_id,
+      action: 'PAYMENT_CAPTURED',
+      entity_type: 'payment',
+      entity_id: paymentId,
+      new_value: {
+        razorpay_order_id: payment.razorpay_order_id,
+        razorpay_payment_id: razorpayPaymentId,
+        amount: Number(payment.amount),
+        order_id: order.id,
+      },
+    });
+
+    await this.sqsProducer.sendPaymentSuccess({
+      eri: payment.ezee_reservation_id,
+      payment_id: paymentId,
+      razorpay_payment_id: razorpayPaymentId,
+      amount: Number(payment.amount),
+      purpose: payment.purpose,
+      guest_id: payment.guest_id,
+      property_id: booking.property_id,
+      items: order.addon_order_items.map((i) => ({
+        product_name: i.product_catalog.name,
+        quantity: i.quantity,
+        total: Number(i.total_price),
+      })),
+    });
 
     this.logger.log(`Order ${order.id} fulfilled — payment ${paymentId} captured`);
 
@@ -776,29 +775,37 @@ export class PaymentService {
         },
       });
 
-      // 4. Log
-      await tx.admin_activity_log.create({
-        data: {
-          id: uuidv4(),
-          actor_type: 'GUEST',
-          actor_id: payment.guest_id,
-          action: 'BOOKING_CONFIRMED',
-          entity_type: 'booking',
-          entity_id: eri,
-          new_value: {
-            razorpay_order_id: payment.razorpay_order_id,
-            razorpay_payment_id: razorpayPaymentId,
-            amount: Number(payment.amount),
-            room_type: booking.room_type_name,
-            checkin: booking.checkin_date,
-            checkout: booking.checkout_date,
-          },
-        },
-      });
+      // 4. Audit log moved outside transaction (goes to SQS)
     }, { timeout: 10000 });
 
     // Invalidate cache
     await this.cacheService.invalidatePropertyCache(booking.property_id);
+
+    // Async audit log + booking confirmed event via SQS
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'GUEST',
+      actor_id: payment.guest_id,
+      action: 'BOOKING_CONFIRMED',
+      entity_type: 'booking',
+      entity_id: eri,
+      new_value: {
+        razorpay_order_id: payment.razorpay_order_id,
+        razorpay_payment_id: razorpayPaymentId,
+        amount: Number(payment.amount),
+        room_type: booking.room_type_name,
+        checkin: booking.checkin_date,
+        checkout: booking.checkout_date,
+      },
+    });
+
+    await this.sqsProducer.sendBookingConfirmed({
+      eri,
+      payment_id: payment.id,
+      guest_id: payment.guest_id,
+      room_type: booking.room_type_name,
+      checkin: booking.checkin_date,
+      checkout: booking.checkout_date,
+    });
 
     this.logger.log(`Booking ${eri} confirmed — payment ${payment.id} captured`);
 

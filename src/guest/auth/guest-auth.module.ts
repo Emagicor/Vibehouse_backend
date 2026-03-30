@@ -4,6 +4,7 @@ import { PassportModule } from '@nestjs/passport';
 import { GuestAuthService } from './guest-auth.service';
 import { GuestAuthController } from './guest-auth.controller';
 import { GuestJwtStrategy } from '../../common/guards/guest-jwt.strategy';
+import { GoogleStrategy } from './google.strategy';
 
 @Module({
   imports: [
@@ -15,7 +16,7 @@ import { GuestJwtStrategy } from '../../common/guards/guest-jwt.strategy';
       }),
     }),
   ],
-  providers: [GuestAuthService, GuestJwtStrategy],
+  providers: [GuestAuthService, GuestJwtStrategy, GoogleStrategy],
   controllers: [GuestAuthController],
   exports: [GuestAuthService],
 })

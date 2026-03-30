@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { GuestSignupDto } from './dto/signup.dto';
 import { GuestLoginDto } from './dto/login.dto';
 import type { GuestJwtPayload } from '../../common/guards/guest-jwt.strategy';
+import type { GoogleOAuthUser } from './google.strategy';
 
 @Injectable()
 export class GuestAuthService {
@@ -117,6 +118,92 @@ export class GuestAuthService {
         room_type_name: b.ezee_booking_cache.room_type_name,
         property_id: b.ezee_booking_cache.property_id,
       })),
+    };
+  }
+
+  // ─── GOOGLE OAUTH ─────────────────────────────────────────────────────────
+
+  async googleLogin(googleUser: GoogleOAuthUser) {
+    // 1. Check if this Google ID is already linked
+    const existingProvider = await this.prisma.auth_providers.findUnique({
+      where: {
+        provider_provider_uid: {
+          provider: 'google',
+          provider_uid: googleUser.google_id,
+        },
+      },
+      include: { guests: true },
+    });
+
+    if (existingProvider) {
+      // Returning Google user — just issue token
+      const guest = existingProvider.guests;
+      return {
+        access_token: this.issueToken(guest),
+        guest: this.formatGuest(guest),
+      };
+    }
+
+    // 2. No Google provider found — check if email already exists (email/password account)
+    let guest = googleUser.email
+      ? await this.prisma.guests.findUnique({ where: { email: googleUser.email } })
+      : null;
+
+    if (guest) {
+      // Existing email account — link Google as an additional provider
+      await this.prisma.auth_providers.create({
+        data: {
+          id: uuidv4(),
+          guest_id: guest.id,
+          provider: 'google',
+          provider_uid: googleUser.google_id,
+        },
+      });
+
+      // Mark email as verified since Google has verified it
+      if (!guest.email_verified) {
+        guest = await this.prisma.guests.update({
+          where: { id: guest.id },
+          data: {
+            email_verified: true,
+            profile_photo_url: guest.profile_photo_url ?? googleUser.profile_photo_url,
+          },
+        });
+      }
+
+      return {
+        access_token: this.issueToken(guest),
+        guest: this.formatGuest(guest),
+      };
+    }
+
+    // 3. Completely new user — create guest + provider in one go
+    const newId = uuidv4();
+    const newGuest = await this.prisma.guests.create({
+      data: {
+        id: newId,
+        name: googleUser.name,
+        email: googleUser.email || null,
+        phone: null,
+        password_hash: null,           // OAuth-only account — no password
+        email_verified: true,          // Google already verified the email
+        phone_verified: false,
+        profile_photo_url: googleUser.profile_photo_url,
+      },
+    });
+
+    await this.prisma.auth_providers.create({
+      data: {
+        id: uuidv4(),
+        guest_id: newId,
+        provider: 'google',
+        provider_uid: googleUser.google_id,
+      },
+    });
+
+    return {
+      access_token: this.issueToken(newGuest),
+      guest: this.formatGuest(newGuest),
     };
   }
 

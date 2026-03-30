@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { SqsModule } from './sqs/sqs.module';
 import { ConfigModule } from '@nestjs/config';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
@@ -34,6 +35,7 @@ import { PublicModule } from './public/public.module';
     GuestKycModule,
     PaymentModule,
     PublicModule,
+    SqsModule,
   ],
 })
 export class AppModule {}

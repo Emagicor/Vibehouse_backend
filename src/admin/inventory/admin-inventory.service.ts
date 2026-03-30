@@ -15,6 +15,7 @@ import { UpdateStockDto } from './dto/update-stock.dto';
 import { BorrowableCheckoutDto } from './dto/borrowable-checkout.dto';
 import { ReturnableIssueDto } from './dto/returnable-issue.dto';
 import { ReturnableReturnDto } from './dto/returnable-return.dto';
+import { SqsProducerService } from '../../sqs/sqs-producer.service';
 import type { AdminJwtPayload } from '../../common/guards/admin-jwt.strategy';
 
 @Injectable()
@@ -22,6 +23,7 @@ export class AdminInventoryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly cacheService: CacheService,
+    private readonly sqsProducer: SqsProducerService,
   ) {}
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -65,16 +67,13 @@ export class AdminInventoryService {
       });
     }
 
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'ADMIN',
-        actor_id: actor.admin_id,
-        action: 'PRODUCT_CREATE',
-        entity_type: 'product_catalog',
-        entity_id: id,
-        new_value: { name: dto.name, category: dto.category },
-      },
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'ADMIN',
+      actor_id: actor.admin_id,
+      action: 'PRODUCT_CREATE',
+      entity_type: 'product_catalog',
+      entity_id: id,
+      new_value: { name: dto.name, category: dto.category },
     });
 
     // Invalidate cache for this property
@@ -140,16 +139,13 @@ export class AdminInventoryService {
       include: { inventory: true },
     });
 
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'ADMIN',
-        actor_id: actor.admin_id,
-        action: 'PRODUCT_UPDATE',
-        entity_type: 'product_catalog',
-        entity_id: id,
-        new_value: dto as object,
-      },
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'ADMIN',
+      actor_id: actor.admin_id,
+      action: 'PRODUCT_UPDATE',
+      entity_type: 'product_catalog',
+      entity_id: id,
+      new_value: dto as Record<string, unknown>,
     });
 
     // Invalidate cache
@@ -180,16 +176,13 @@ export class AdminInventoryService {
     await this.prisma.inventory.deleteMany({ where: { product_id: id } });
     await this.prisma.product_catalog.delete({ where: { id } });
 
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'ADMIN',
-        actor_id: actor.admin_id,
-        action: 'PRODUCT_DELETE',
-        entity_type: 'product_catalog',
-        entity_id: id,
-        old_value: { name: product.name, category: product.category },
-      },
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'ADMIN',
+      actor_id: actor.admin_id,
+      action: 'PRODUCT_DELETE',
+      entity_type: 'product_catalog',
+      entity_id: id,
+      old_value: { name: product.name, category: product.category },
     });
 
     // Invalidate cache
@@ -243,17 +236,25 @@ export class AdminInventoryService {
       include: { product_catalog: true },
     });
 
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'ADMIN',
-        actor_id: actor.admin_id,
-        action: 'INVENTORY_RESTOCK',
-        entity_type: 'inventory',
-        entity_id: inv.id,
-        new_value: { quantity_added: dto.quantity, new_total: updated.total_stock },
-      },
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'ADMIN',
+      actor_id: actor.admin_id,
+      action: 'INVENTORY_RESTOCK',
+      entity_type: 'inventory',
+      entity_id: inv.id,
+      new_value: { quantity_added: dto.quantity, new_total: updated.total_stock },
     });
+
+    // Check low stock after restock
+    if (updated.available_stock <= updated.low_stock_threshold) {
+      await this.sqsProducer.sendLowStockAlert({
+        property_id: inv.property_id,
+        product_id: productId,
+        product_name: updated.product_catalog.name,
+        available_stock: updated.available_stock,
+        threshold: updated.low_stock_threshold,
+      });
+    }
 
     // Invalidate cache
     await this.cacheService.invalidatePropertyCache(inv.property_id);
@@ -289,21 +290,29 @@ export class AdminInventoryService {
       include: { product_catalog: true },
     });
 
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'ADMIN',
-        actor_id: actor.admin_id,
-        action: 'INVENTORY_DAMAGE',
-        entity_type: 'inventory',
-        entity_id: inv.id,
-        new_value: {
-          damaged_qty: dto.quantity,
-          notes: dto.notes,
-          new_available: updated.available_stock,
-        },
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'ADMIN',
+      actor_id: actor.admin_id,
+      action: 'INVENTORY_DAMAGE',
+      entity_type: 'inventory',
+      entity_id: inv.id,
+      new_value: {
+        damaged_qty: dto.quantity,
+        notes: dto.notes,
+        new_available: updated.available_stock,
       },
     });
+
+    // Check low stock after damage
+    if (updated.available_stock <= updated.low_stock_threshold) {
+      await this.sqsProducer.sendLowStockAlert({
+        property_id: inv.property_id,
+        product_id: productId,
+        product_name: updated.product_catalog.name,
+        available_stock: updated.available_stock,
+        threshold: updated.low_stock_threshold,
+      });
+    }
 
     // Invalidate cache
     await this.cacheService.invalidatePropertyCache(inv.property_id);
@@ -328,16 +337,13 @@ export class AdminInventoryService {
       include: { product_catalog: true },
     });
 
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'ADMIN',
-        actor_id: actor.admin_id,
-        action: 'INVENTORY_CONFIG_UPDATE',
-        entity_type: 'inventory',
-        entity_id: inventoryId,
-        new_value: dto as object,
-      },
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'ADMIN',
+      actor_id: actor.admin_id,
+      action: 'INVENTORY_CONFIG_UPDATE',
+      entity_type: 'inventory',
+      entity_id: inventoryId,
+      new_value: dto as Record<string, unknown>,
     });
 
     // Invalidate cache
@@ -451,20 +457,17 @@ export class AdminInventoryService {
       }),
     ]);
 
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'ADMIN',
-        actor_id: actor.admin_id,
-        action: 'BORROWABLE_CHECKOUT',
-        entity_type: 'borrowable_checkouts',
-        entity_id: checkoutId,
-        new_value: {
-          product: inv.product_catalog.name,
-          guest_id: dto.guest_id,
-          guest_name: guest.name,
-          booking: dto.ezee_reservation_id,
-        },
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'ADMIN',
+      actor_id: actor.admin_id,
+      action: 'BORROWABLE_CHECKOUT',
+      entity_type: 'borrowable_checkouts',
+      entity_id: checkoutId,
+      new_value: {
+        product: inv.product_catalog.name,
+        guest_id: dto.guest_id,
+        guest_name: guest.name,
+        booking: dto.ezee_reservation_id,
       },
     });
 
@@ -599,16 +602,13 @@ export class AdminInventoryService {
       }),
     ]);
 
-    await this.prisma.admin_activity_log.create({
-      data: {
-        id: uuidv4(),
-        actor_type: 'ADMIN',
-        actor_id: actor.admin_id,
-        action: 'BORROWABLE_RETURN_VERIFIED',
-        entity_type: 'borrowable_checkouts',
-        entity_id: checkoutId,
-        new_value: { verified_by: staffId },
-      },
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'ADMIN',
+      actor_id: actor.admin_id,
+      action: 'BORROWABLE_RETURN_VERIFIED',
+      entity_type: 'borrowable_checkouts',
+      entity_id: checkoutId,
+      new_value: { verified_by: staffId },
     });
 
     // Invalidate cache — need property_id from inventory
