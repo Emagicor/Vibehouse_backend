@@ -113,15 +113,17 @@ export class GuestAuthService {
 
     return {
       ...this.formatGuest(guest),
-      bookings: bookings.map((b) => ({
-        ezee_reservation_id: b.ezee_reservation_id,
-        role: b.role,
-        status: b.status,
-        checkin_date: b.ezee_booking_cache.checkin_date,
-        checkout_date: b.ezee_booking_cache.checkout_date,
-        room_type_name: b.ezee_booking_cache.room_type_name,
-        property_id: b.ezee_booking_cache.property_id,
-      })),
+      bookings: bookings
+        .filter((b) => b.ezee_booking_cache !== null)
+        .map((b) => ({
+          ezee_reservation_id: b.ezee_reservation_id,
+          role: b.role,
+          status: b.status,
+          checkin_date: b.ezee_booking_cache.checkin_date,
+          checkout_date: b.ezee_booking_cache.checkout_date,
+          room_type_name: b.ezee_booking_cache.room_type_name,
+          property_id: b.ezee_booking_cache.property_id,
+        })),
     };
   }
 
