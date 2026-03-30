@@ -1,5 +1,6 @@
 import { Controller, Post, Get, Body, UseGuards, Req, Res, Logger } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
+import * as passport from 'passport';
 import type { Request, Response } from 'express';
 import { GuestAuthService } from './guest-auth.service';
 import { GuestSignupDto } from './dto/signup.dto';
@@ -62,34 +63,44 @@ export class GuestAuthController {
 
   /**
    * Step 1: Redirect browser to Google consent screen.
-   * Frontend navigates directly to this URL (window.location or <a href>).
    */
   @Get('google')
   @UseGuards(AuthGuard('google'))
   googleLogin() {
-    // Passport handles the redirect — this handler body never executes
+    // Passport handles the redirect — this handler never executes
   }
 
   /**
    * Step 2: Google redirects back here after consent.
-   * Passport exchanges the auth code and populates req.user with GoogleOAuthUser.
    *
-   * On success → 302 to FRONTEND_URL/auth/google/success?token=<jwt>&name=<name>
-   * On any error → 302 to FRONTEND_URL/auth/google/error?reason=callback_failed
-   *                (never leaves user on a bare backend JSON error)
+   * We use passport.authenticate() directly (not @UseGuards) so that
+   * ALL failures — code exchange, token validation, DB upsert, JWT signing —
+   * redirect to the frontend error page instead of returning a bare 500.
    */
   @Get('google/callback')
-  @UseGuards(AuthGuard('google'))
   async googleCallback(@Req() req: Request, @Res() res: Response) {
     const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3000';
 
+    // Wrap passport.authenticate in a promise so errors land in our catch
+    const googleUser = await new Promise<GoogleOAuthUser | null>((resolve) => {
+      passport.authenticate('google', { session: false }, (err: any, user: any) => {
+        if (err || !user) {
+          this.logger.error(
+            'Passport Google auth failed:',
+            err instanceof Error ? err.message : err ?? 'No user returned',
+          );
+          resolve(null);
+        } else {
+          resolve(user as GoogleOAuthUser);
+        }
+      })(req, res);
+    });
+
+    if (!googleUser) {
+      return res.redirect(`${frontendUrl}/auth/google/error?reason=auth_failed`);
+    }
+
     try {
-      const googleUser = req.user as GoogleOAuthUser;
-
-      if (!googleUser) {
-        throw new Error('Passport returned no user from Google OAuth');
-      }
-
       const result = await this.guestAuthService.googleLogin(googleUser);
 
       const redirect =
@@ -99,8 +110,11 @@ export class GuestAuthController {
 
       return res.redirect(redirect);
     } catch (err) {
-      this.logger.error('Google OAuth callback failed', err instanceof Error ? err.message : err);
-      return res.redirect(`${frontendUrl}/auth/google/error?reason=callback_failed`);
+      this.logger.error(
+        'Google OAuth login processing failed:',
+        err instanceof Error ? err.stack : err,
+      );
+      return res.redirect(`${frontendUrl}/auth/google/error?reason=login_failed`);
     }
   }
 }

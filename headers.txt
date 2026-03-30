@@ -1,0 +1,15 @@
+HTTP/1.1 302 
+Connection: keep-alive
+Content-Length: 0
+access-control-allow-origin: *
+x-railway-cdn-edge: fastly/cache-bom-vanm7210095-BOM
+date: Mon, 30 Mar 2026 13:27:44 GMT
+location: https://accounts.google.com/o/oauth2/v2/auth?response_type=code&redirect_uri=https%3A%2F%2Fvibehousebackend-production.up.railway.app%2Fguest%2Fauth%2Fgoogle%2Fcallback&scope=openid%20email%20profile&client_id=110437049679-2a7629t7n34bkresv8llpqa6ut6kcr5b.apps.googleusercontent.com
+server: railway-edge
+x-powered-by: Express
+x-railway-edge: railway/asia-southeast1-eqsg3a
+x-railway-request-id: CVN-Na9FQ4ScrlTRAQeqjw
+x-cache: MISS
+x-cache-hits: 0
+x-served-by: cache-bom-vanm7210095-BOM
+
