@@ -32,7 +32,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
     const user: GoogleOAuthUser = {
       google_id: profile.id,
       email: email ?? '',
-      name: profile.displayName ?? email ?? 'Google User',
+      name: profile.displayName || email || 'Guest',
       profile_photo_url: photo,
     };
 

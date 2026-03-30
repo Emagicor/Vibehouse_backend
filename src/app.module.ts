@@ -16,6 +16,7 @@ import { GuestKycModule } from './guest/kyc/guest-kyc.module';
 import { PaymentModule } from './payment/payment.module';
 import { AdminEventsModule } from './admin/events/admin-events.module';
 import { PublicModule } from './public/public.module';
+import { EmailModule } from './email/email.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { PublicModule } from './public/public.module';
     PaymentModule,
     PublicModule,
     SqsModule,
+    EmailModule,
   ],
 })
 export class AppModule {}

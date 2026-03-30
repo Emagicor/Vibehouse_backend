@@ -8,7 +8,7 @@ import { GoogleStrategy } from './google.strategy';
 
 @Module({
   imports: [
-    PassportModule,
+    PassportModule.register({ session: false }),
     JwtModule.registerAsync({
       useFactory: () => ({
         secret: process.env.JWT_SECRET ?? 'fallback-secret',
