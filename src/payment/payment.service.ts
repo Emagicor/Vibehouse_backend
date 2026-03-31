@@ -643,6 +643,18 @@ export class PaymentService {
       })),
     });
 
+    // Emit to eZee sync queue — records addon charge in eZee folio
+    await this.sqsProducer.sendEzeeAddExtraCharge({
+      eri: payment.ezee_reservation_id,
+      property_id: booking.property_id,
+      items: order.addon_order_items.map((i) => ({
+        product_name: i.product_catalog.name,
+        quantity: i.quantity,
+        amount: Number(i.total_price),
+      })),
+      razorpay_payment_id: razorpayPaymentId,
+    });
+
     this.logger.log(`Order ${order.id} fulfilled — payment ${paymentId} captured`);
 
     return {
@@ -805,6 +817,17 @@ export class PaymentService {
       room_type: booking.room_type_name,
       checkin: booking.checkin_date,
       checkout: booking.checkout_date,
+    });
+
+    // Emit to eZee sync queue — creates booking in eZee PMS
+    await this.sqsProducer.sendEzeeInsertBooking({
+      eri,
+      guest_id: payment.guest_id,
+      property_id: booking.property_id,
+      room_type: booking.room_type_name,
+      checkin: booking.checkin_date?.toISOString().split('T')[0] ?? null,
+      checkout: booking.checkout_date?.toISOString().split('T')[0] ?? null,
+      amount: Number(payment.amount),
     });
 
     this.logger.log(`Booking ${eri} confirmed — payment ${payment.id} captured`);

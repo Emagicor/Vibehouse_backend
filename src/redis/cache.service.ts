@@ -14,8 +14,9 @@ export class CacheService {
   private readonly logger = new Logger(CacheService.name);
 
   // ── TTL constants (ms) ───────────────────────────────────────────────
-  static readonly TTL_CATALOG = 10 * 60 * 1000;    // 10 min
-  static readonly TTL_JWT     = 60 * 1000;          // 60 sec
+  static readonly TTL_CATALOG           = 10 * 60 * 1000;  // 10 min
+  static readonly TTL_JWT               = 60 * 1000;       // 60 sec
+  static readonly TTL_ROOM_AVAILABILITY = 30 * 60 * 1000;  // 30 min
 
   // Using 'any' type for cache manager to avoid TS1272 with emitDecoratorMetadata
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -115,5 +116,9 @@ export class CacheService {
 
   static guestJwtKey(guestId: string): string {
     return `jwt:guest:${guestId}`;
+  }
+
+  static roomAvailabilityKey(propertyId: string, checkin: string, checkout: string): string {
+    return `rooms:${propertyId}:${checkin}:${checkout}`;
   }
 }

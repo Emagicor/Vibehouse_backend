@@ -1,6 +1,5 @@
 import { Controller, Post, Get, Body, UseGuards, Req, Res, Logger } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
-import * as passport from 'passport';
 import type { Request, Response } from 'express';
 import { GuestAuthService } from './guest-auth.service';
 import { GuestSignupDto } from './dto/signup.dto';
@@ -10,6 +9,20 @@ import { GuestJwtGuard } from '../../common/guards/guest-jwt.guard';
 import { CurrentGuest } from '../../common/decorators/current-guest.decorator';
 import type { GuestJwtPayload } from '../../common/guards/guest-jwt.strategy';
 import type { GoogleOAuthUser } from './google.strategy';
+
+/**
+ * Custom guard that catches ALL passport-level errors and returns null
+ * instead of throwing. This lets the controller handle the error
+ * by redirecting to the frontend error page.
+ */
+class GoogleOAuthGuard extends AuthGuard('google') {
+  handleRequest(err: any, user: any) {
+    if (err || !user) {
+      return null; // Don't throw — let the controller handle it
+    }
+    return user;
+  }
+}
 
 @Controller('guest/auth')
 export class GuestAuthController {
@@ -73,30 +86,21 @@ export class GuestAuthController {
   /**
    * Step 2: Google redirects back here after consent.
    *
-   * We use passport.authenticate() directly (not @UseGuards) so that
-   * ALL failures — code exchange, token validation, DB upsert, JWT signing —
-   * redirect to the frontend error page instead of returning a bare 500.
+   * Uses GoogleOAuthGuard (extends AuthGuard) which overrides handleRequest
+   * to return null on failure instead of throwing. This way:
+   * - Passport errors (code exchange, token exchange) → req.user is null → redirect to error page
+   * - Service errors (DB, JWT) → caught by try/catch → redirect to error page
+   * - Success → redirect to frontend with token
    */
   @Get('google/callback')
+  @UseGuards(GoogleOAuthGuard)
   async googleCallback(@Req() req: Request, @Res() res: Response) {
     const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3000';
 
-    // Wrap passport.authenticate in a promise so errors land in our catch
-    const googleUser = await new Promise<GoogleOAuthUser | null>((resolve) => {
-      passport.authenticate('google', { session: false }, (err: any, user: any) => {
-        if (err || !user) {
-          this.logger.error(
-            'Passport Google auth failed:',
-            err instanceof Error ? err.message : err ?? 'No user returned',
-          );
-          resolve(null);
-        } else {
-          resolve(user as GoogleOAuthUser);
-        }
-      })(req, res);
-    });
+    const googleUser = req.user as GoogleOAuthUser | null;
 
     if (!googleUser) {
+      this.logger.error('Google OAuth callback: passport returned no user');
       return res.redirect(`${frontendUrl}/auth/google/error?reason=auth_failed`);
     }
 

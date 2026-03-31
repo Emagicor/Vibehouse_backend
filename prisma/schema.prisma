@@ -200,35 +200,38 @@ model events {
 }
 
 model ezee_booking_cache {
-  ezee_reservation_id  String                 @id @db.VarChar(100)
-  property_id          String                 @db.VarChar(36)
-  guest_id             String?                @db.VarChar(36)
-  booker_email         String?                @db.VarChar(255)
-  booker_phone         String?                @db.VarChar(20)
-  room_type_name       String?                @db.VarChar(100)
-  room_number          String?                @db.VarChar(20)
-  unit_code            String?                @db.VarChar(20)
-  checkin_date         DateTime?              @db.Date
-  checkout_date        DateTime?              @db.Date
-  no_of_guests         Int?                   @default(1)
-  source               String?                @db.VarChar(50)
-  status               String?                @db.VarChar(30)
-  is_active            Boolean                @default(true)
-  fetched_at           DateTime               @db.Timestamp(6)
-  created_at           DateTime               @default(now()) @db.Timestamp(6)
-  addon_orders         addon_orders[]
-  booking_guest_access booking_guest_access[]
-  booking_slots        booking_slots[]
-  borrowable_checkouts borrowable_checkouts[]
-  checkin_records      checkin_records[]
-  guests               guests?                @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  properties           properties             @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
-  kyc_submissions      kyc_submissions[]
-  payments             payments[]
-  returnable_checkouts returnable_checkouts[]
-  smart_lock_access    smart_lock_access[]
-  stay_extensions      stay_extensions[]
-  zoho_ticket_ref      zoho_ticket_ref[]
+  ezee_reservation_id      String                 @id @db.VarChar(100)
+  property_id              String                 @db.VarChar(36)
+  guest_id                 String?                @db.VarChar(36)
+  booker_email             String?                @db.VarChar(255)
+  booker_phone             String?                @db.VarChar(20)
+  room_type_name           String?                @db.VarChar(100)
+  room_number              String?                @db.VarChar(20)
+  unit_code                String?                @db.VarChar(20)
+  checkin_date             DateTime?              @db.Date
+  checkout_date            DateTime?              @db.Date
+  no_of_guests             Int?                   @default(1)
+  source                   String?                @db.VarChar(50)
+  status                   String?                @db.VarChar(30)
+  is_active                Boolean                @default(true)
+  fetched_at               DateTime               @db.Timestamp(6)
+  created_at               DateTime               @default(now()) @db.Timestamp(6)
+  ezee_reservation_no      String?                @db.VarChar(100)
+  ezee_sub_reservation_nos String?
+  booking_rooms_json       Json?
+  addon_orders             addon_orders[]
+  booking_guest_access     booking_guest_access[]
+  booking_slots            booking_slots[]
+  borrowable_checkouts     borrowable_checkouts[]
+  checkin_records          checkin_records[]
+  guests                   guests?                @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  properties               properties             @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  kyc_submissions          kyc_submissions[]
+  payments                 payments[]
+  returnable_checkouts     returnable_checkouts[]
+  smart_lock_access        smart_lock_access[]
+  stay_extensions          stay_extensions[]
+  zoho_ticket_ref          zoho_ticket_ref[]
 
   @@index([guest_id], map: "idx_ezee_cache_guest")
   @@index([property_id, status], map: "idx_ezee_cache_property")
@@ -501,6 +504,9 @@ model room_types {
   is_active            Boolean?   @default(true)
   created_at           DateTime?  @default(now()) @db.Timestamp(6)
   updated_at           DateTime?  @default(now()) @db.Timestamp(6)
+  ezee_room_type_id    String?    @db.VarChar(50)
+  ezee_rate_plan_id    String?    @db.VarChar(50)
+  ezee_rate_type_id    String?    @db.VarChar(50)
   properties           properties @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@unique([property_id, slug])

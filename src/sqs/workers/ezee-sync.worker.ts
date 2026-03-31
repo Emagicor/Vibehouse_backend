@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { v4 as uuidv4 } from 'uuid';
 import { EzeeSyncMessageType } from '../sqs.constants';
 import type { SqsWorker } from '../sqs-consumer.service';
 import type {
@@ -7,20 +8,27 @@ import type {
   EzeeAddExtraChargePayload,
   EzeeUpdateReservationPayload,
 } from '../types/messages';
+import { EzeeService } from '../../ezee/ezee.service';
+import { EzeeApiError } from '../../ezee/ezee.types';
+import { PrismaService } from '../../prisma/prisma.service';
+import { CacheService } from '../../redis/cache.service';
 
 /**
  * eZee Sync Worker — consumes vibehouse-ezee-sync.fifo
  *
  * Processes eZee PMS API calls one at a time (maxMessages=1) to respect
- * eZee's rate limits. All eZee API calls go through this single-threaded
- * consumer instead of being called inline from multiple concurrent requests.
- *
- * Currently STUBBED — eZee InsertBooking is blocked pending payment gateway
- * configuration in eZee admin panel. Handlers log the action and return.
+ * eZee's rate limits. Each booking sync involves 5 sequential API calls
+ * with 2.5s delays between them.
  */
 @Injectable()
 export class EzeeSyncWorker implements SqsWorker {
   private readonly logger = new Logger(EzeeSyncWorker.name);
+
+  constructor(
+    private readonly ezee: EzeeService,
+    private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+  ) {}
 
   async process(message: SqsMessageEnvelope): Promise<void> {
     switch (message.type) {
@@ -41,28 +49,354 @@ export class EzeeSyncWorker implements SqsWorker {
     }
   }
 
-  // ── Handlers (all stubbed — eZee integration blocked) ─────────────────────
+  // ── Helpers ──────────────────────────────────────────────────────────────
 
-  private async handleInsertBooking(payload: EzeeInsertBookingPayload): Promise<void> {
-    this.logger.log(
-      `[STUB] eZee InsertBooking: ERI ${payload.eri} | Room: ${payload.room_type} | ₹${payload.amount}`,
-    );
-    // Future: Call eZee API with RES_Request wrapper
-    // Future: Update ezee_sync_log with result
+  private delay(ms = 2500): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
+
+  private async createSyncLog(entityType: string, entityId: string, action: string): Promise<string> {
+    const id = uuidv4();
+    await this.prisma.ezee_sync_log.create({
+      data: {
+        id,
+        entity_type: entityType,
+        entity_id: entityId,
+        action,
+        status: 'PENDING',
+        attempts: 1,
+        last_attempted_at: new Date(),
+      },
+    });
+    return id;
+  }
+
+  private async updateSyncLog(id: string, status: string, error?: string): Promise<void> {
+    await this.prisma.ezee_sync_log.update({
+      where: { id },
+      data: {
+        status,
+        error_message: error ?? null,
+        last_attempted_at: new Date(),
+      },
+    });
+  }
+
+  // ── INSERT BOOKING ───────────────────────────────────────────────────────
+
+  /**
+   * Full booking sync flow:
+   * 1. InsertBooking → get ReservationNo
+   * 2. ProcessBooking → confirm
+   * 3. RoomAvailability → find free rooms
+   * 4. AssignRoom → assign physical rooms
+   * 5. AddPayment → record in folio
+   *
+   * Idempotent: checks ezee_reservation_no to skip already-completed steps.
+   */
+  private async handleInsertBooking(payload: EzeeInsertBookingPayload): Promise<void> {
+    const { eri, property_id } = payload;
+
+    const booking = await this.prisma.ezee_booking_cache.findUnique({
+      where: { ezee_reservation_id: eri },
+    });
+    if (!booking) {
+      this.logger.error(`Booking ${eri} not found — skipping`);
+      return;
+    }
+
+    const guest = await this.prisma.guests.findUnique({
+      where: { id: booking.guest_id! },
+    });
+    if (!guest) {
+      this.logger.error(`Guest ${booking.guest_id} not found for booking ${eri} — skipping`);
+      return;
+    }
+
+    const syncLogId = await this.createSyncLog('booking', eri, 'INSERT_BOOKING');
+
+    try {
+      // Parse room selections from booking_rooms_json
+      const roomSelections = this.parseBookingRooms(booking);
+      if (roomSelections.length === 0) {
+        throw new Error(`No room selections found for booking ${eri}`);
+      }
+
+      // ── Step 1: InsertBooking (skip if already done) ──────────────────
+      let reservationNo = booking.ezee_reservation_no ?? null;
+      let subReservationNos: string[] = booking.ezee_sub_reservation_nos
+        ? booking.ezee_sub_reservation_nos.split(',')
+        : [];
+
+      if (!reservationNo) {
+        // Parse guest name
+        const nameParts = (guest.name || 'Guest').trim().split(/\s+/);
+        const firstName = nameParts[0];
+        const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : firstName;
+
+        // Build rooms for eZee
+        const numberOfNights = this.calcNights(booking.checkin_date, booking.checkout_date);
+        const ezeeRooms = this.buildEzeeRooms(roomSelections, numberOfNights, firstName, lastName);
+
+        const checkin = this.formatDate(booking.checkin_date);
+        const checkout = this.formatDate(booking.checkout_date);
+
+        this.logger.log(`eZee InsertBooking: ERI=${eri}, ${ezeeRooms.length} room(s), ${checkin} → ${checkout}`);
+
+        const result = await this.ezee.insertBooking(property_id, {
+          checkin,
+          checkout,
+          email: guest.email ?? '',
+          phone: guest.phone ?? '',
+          rooms: ezeeRooms,
+        });
+
+        reservationNo = result.reservationNo;
+        subReservationNos = result.subReservationNos;
+
+        // Persist eZee reservation number
+        await this.prisma.ezee_booking_cache.update({
+          where: { ezee_reservation_id: eri },
+          data: {
+            ezee_reservation_no: reservationNo,
+            ezee_sub_reservation_nos: subReservationNos.join(','),
+          },
+        });
+
+        await this.delay();
+      } else {
+        this.logger.log(`eZee InsertBooking already done for ${eri}: ReservationNo=${reservationNo}`);
+      }
+
+      // ── Step 2: ProcessBooking (Confirm) ──────────────────────────────
+      this.logger.log(`eZee ProcessBooking: confirming ${reservationNo}`);
+      await this.ezee.processBooking(property_id, reservationNo);
+      await this.delay();
+
+      // ── Step 3: RoomAvailability → pick rooms ─────────────────────────
+      const checkinStr = this.formatDate(booking.checkin_date);
+      const checkoutStr = this.formatDate(booking.checkout_date);
+      const availability = await this.ezee.getRoomAvailability(property_id, checkinStr, checkoutStr);
+      await this.delay();
+
+      // ── Step 4: AssignRoom ────────────────────────────────────────────
+      const assignments = this.pickRoomsForAssignment(
+        roomSelections,
+        subReservationNos,
+        availability,
+      );
+
+      if (assignments.length > 0) {
+        this.logger.log(`eZee AssignRoom: ${assignments.length} assignment(s) for ${eri}`);
+        try {
+          await this.ezee.assignRoom(property_id, assignments);
+
+          // Update booking cache with room info
+          const roomNumbers = assignments.map((a) => a.roomName).join(', ');
+          await this.prisma.ezee_booking_cache.update({
+            where: { ezee_reservation_id: eri },
+            data: {
+              room_number: roomNumbers,
+              unit_code: assignments[0]?.roomId ?? null,
+            },
+          });
+        } catch (err) {
+          // AssignRoom failure is non-fatal — front desk can assign manually
+          this.logger.warn(`eZee AssignRoom partial failure for ${eri}: ${(err as Error).message}`);
+        }
+        await this.delay();
+      }
+
+      // ── Step 5: AddPayment ────────────────────────────────────────────
+      const primaryBookingId = subReservationNos[0] ?? reservationNo;
+      this.logger.log(`eZee AddPayment: Booking ${primaryBookingId}, ₹${payload.amount}`);
+      try {
+        await this.ezee.addPayment(property_id, primaryBookingId, payload.amount);
+      } catch (err) {
+        // AddPayment failure is non-fatal — folio can be updated manually
+        this.logger.warn(`eZee AddPayment failed for ${eri}: ${(err as Error).message}`);
+      }
+
+      // ── Done ──────────────────────────────────────────────────────────
+      await this.updateSyncLog(syncLogId, 'SUCCESS');
+
+      // Invalidate room availability cache for this property + date range
+      const cacheKey = CacheService.roomAvailabilityKey(property_id, checkinStr, checkoutStr);
+      await this.cache.del(cacheKey);
+
+      this.logger.log(`eZee booking sync complete: ERI=${eri}, eZee=${reservationNo}`);
+    } catch (err) {
+      const message = err instanceof EzeeApiError
+        ? `[${err.code}] ${err.message}`
+        : (err as Error).message;
+
+      this.logger.error(`eZee InsertBooking failed for ${eri}: ${message}`);
+      await this.updateSyncLog(syncLogId, 'FAILED', message);
+      throw err; // Let SQS retry
+    }
+  }
+
+  // ── ADD EXTRA CHARGE ─────────────────────────────────────────────────────
 
   private async handleAddExtraCharge(payload: EzeeAddExtraChargePayload): Promise<void> {
-    this.logger.log(
-      `[STUB] eZee AddExtraCharge: ERI ${payload.eri} | ${payload.items.length} items`,
-    );
-    // Future: Call eZee AddExtraCharge API
-    // Future: Update ezee_sync_log with result
+    const { eri, property_id, items } = payload;
+
+    const booking = await this.prisma.ezee_booking_cache.findUnique({
+      where: { ezee_reservation_id: eri },
+    });
+
+    if (!booking) {
+      this.logger.error(`Booking ${eri} not found for AddExtraCharge — skipping`);
+      return;
+    }
+
+    // Need the eZee reservation number — if not synced yet, retry later
+    const reservationNo = booking.ezee_reservation_no;
+    if (!reservationNo) {
+      this.logger.warn(`eZee reservation not yet synced for ${eri} — retrying`);
+      throw new Error(`eZee reservation not synced yet for ${eri}`);
+    }
+
+    const subNos = booking.ezee_sub_reservation_nos?.split(',') ?? [];
+    const bookingId = subNos[0] ?? reservationNo;
+
+    const totalAmount = items.reduce((sum, item) => sum + item.amount * item.quantity, 0);
+
+    const syncLogId = await this.createSyncLog('addon', eri, 'ADD_EXTRA_CHARGE');
+
+    try {
+      this.logger.log(`eZee AddPayment (addon): Booking ${bookingId}, ₹${totalAmount}, ${items.length} items`);
+      await this.ezee.addPayment(property_id, bookingId, totalAmount);
+      await this.updateSyncLog(syncLogId, 'SUCCESS');
+      this.logger.log(`eZee addon charge synced for ${eri}`);
+    } catch (err) {
+      const message = err instanceof EzeeApiError
+        ? `[${err.code}] ${err.message}`
+        : (err as Error).message;
+
+      this.logger.error(`eZee AddExtraCharge failed for ${eri}: ${message}`);
+      await this.updateSyncLog(syncLogId, 'FAILED', message);
+      throw err; // Let SQS retry
+    }
   }
 
+  // ── UPDATE RESERVATION ───────────────────────────────────────────────────
+
   private async handleUpdateReservation(payload: EzeeUpdateReservationPayload): Promise<void> {
-    this.logger.log(
-      `[STUB] eZee UpdateReservation: ERI ${payload.eri}`,
-    );
-    // Future: Call eZee API to update reservation details
+    this.logger.log(`[STUB] eZee UpdateReservation: ERI ${payload.eri}`);
+    // Phase 2: stay extensions, cancellations, date changes
+  }
+
+  // ── Room picking helpers ─────────────────────────────────────────────────
+
+  private parseBookingRooms(booking: any): Array<{
+    ezeeRoomTypeId: string;
+    ezeeRatePlanId: string;
+    ezeeRateTypeId: string;
+    quantity: number;
+    pricePerNight: number;
+  }> {
+    // Try structured JSON first
+    if (booking.booking_rooms_json) {
+      const rooms = typeof booking.booking_rooms_json === 'string'
+        ? JSON.parse(booking.booking_rooms_json)
+        : booking.booking_rooms_json;
+      return rooms.map((r: any) => ({
+        ezeeRoomTypeId: r.ezee_room_type_id,
+        ezeeRatePlanId: r.ezee_rate_plan_id,
+        ezeeRateTypeId: r.ezee_rate_type_id ?? r.ezee_rate_plan_id,
+        quantity: r.quantity,
+        pricePerNight: r.price_per_night,
+      }));
+    }
+
+    // Fallback: no structured data available
+    this.logger.warn(`No booking_rooms_json for ${booking.ezee_reservation_id} — cannot parse rooms`);
+    return [];
+  }
+
+  private buildEzeeRooms(
+    roomSelections: Array<{
+      ezeeRoomTypeId: string;
+      ezeeRatePlanId: string;
+      ezeeRateTypeId: string;
+      quantity: number;
+      pricePerNight: number;
+    }>,
+    numberOfNights: number,
+    defaultFirstName: string,
+    defaultLastName: string,
+  ) {
+    const rooms: any[] = [];
+    for (const sel of roomSelections) {
+      for (let q = 0; q < sel.quantity; q++) {
+        rooms.push({
+          ezeeRoomTypeId: sel.ezeeRoomTypeId,
+          ezeeRatePlanId: sel.ezeeRatePlanId,
+          ezeeRateTypeId: sel.ezeeRateTypeId,
+          adults: 1,
+          children: 0,
+          ratePerNight: sel.pricePerNight,
+          numberOfNights,
+          guestTitle: 'Mr',
+          guestFirstName: defaultFirstName,
+          guestLastName: defaultLastName,
+          guestGender: 'Male',
+        });
+      }
+    }
+    return rooms;
+  }
+
+  private pickRoomsForAssignment(
+    roomSelections: Array<{ ezeeRoomTypeId: string; quantity: number }>,
+    subReservationNos: string[],
+    availability: { rooms: Array<{ roomTypeId: string; physicalRooms: Array<{ roomId: string; roomName: string }> }> },
+  ): Array<{ bookingId: string; roomTypeId: string; roomId: string; roomName: string }> {
+    const assignments: Array<{ bookingId: string; roomTypeId: string; roomId: string; roomName: string }> = [];
+
+    // Track which physical rooms we've already picked
+    const usedRoomIds = new Set<string>();
+    let subIdx = 0;
+
+    for (const sel of roomSelections) {
+      const availableType = availability.rooms.find((r) => r.roomTypeId === sel.ezeeRoomTypeId);
+      if (!availableType) {
+        this.logger.warn(`No available rooms for eZee room type ${sel.ezeeRoomTypeId}`);
+        continue;
+      }
+
+      for (let q = 0; q < sel.quantity; q++) {
+        const freeRoom = availableType.physicalRooms.find((r) => !usedRoomIds.has(r.roomId));
+        if (!freeRoom) {
+          this.logger.warn(`No free physical room for type ${sel.ezeeRoomTypeId} (needed ${sel.quantity}, got ${q})`);
+          break;
+        }
+
+        usedRoomIds.add(freeRoom.roomId);
+        const bookingId = subReservationNos[subIdx] ?? subReservationNos[0];
+        assignments.push({
+          bookingId,
+          roomTypeId: sel.ezeeRoomTypeId,
+          roomId: freeRoom.roomId,
+          roomName: freeRoom.roomName,
+        });
+        subIdx++;
+      }
+    }
+
+    return assignments;
+  }
+
+  private calcNights(checkin: Date | null | undefined, checkout: Date | null | undefined): number {
+    if (!checkin || !checkout) return 1;
+    const ms = new Date(checkout).getTime() - new Date(checkin).getTime();
+    return Math.max(1, Math.ceil(ms / (1000 * 60 * 60 * 24)));
+  }
+
+  private formatDate(date: Date | null | undefined): string {
+    if (!date) return '';
+    const d = new Date(date);
+    return d.toISOString().split('T')[0]; // YYYY-MM-DD
   }
 }

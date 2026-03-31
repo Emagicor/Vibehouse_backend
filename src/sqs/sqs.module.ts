@@ -5,6 +5,7 @@ import { OpsTaskWorker } from './workers/ops-task.worker';
 import { EzeeSyncWorker } from './workers/ezee-sync.worker';
 import { NotifyWorker } from './workers/notify.worker';
 import { SQS_QUEUE_URLS } from './sqs.constants';
+import { EzeeModule } from '../ezee/ezee.module';
 
 /**
  * SQS Module — wires producer, consumer, and all workers.
@@ -19,6 +20,7 @@ import { SQS_QUEUE_URLS } from './sqs.constants';
  */
 @Global()
 @Module({
+  imports: [EzeeModule],
   providers: [
     SqsProducerService,
     SqsConsumerService,

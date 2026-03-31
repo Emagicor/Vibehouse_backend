@@ -17,6 +17,7 @@ import { PaymentModule } from './payment/payment.module';
 import { AdminEventsModule } from './admin/events/admin-events.module';
 import { PublicModule } from './public/public.module';
 import { EmailModule } from './email/email.module';
+import { EzeeModule } from './ezee/ezee.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { EmailModule } from './email/email.module';
     PrismaModule,
     RedisModule,
     AwsModule,
+    EzeeModule,
     AdminAuthModule,
     AdminUsersModule,
     GuestAuthModule,

@@ -5,13 +5,23 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CacheService } from '../../redis/cache.service';
+import { EzeeService } from '../../ezee/ezee.service';
 import { v4 as uuidv4 } from 'uuid';
 import type { CreateBookingOrderDto } from './dto/create-booking-order.dto';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface ValidatedRoom {
-  roomType: { id: string; name: string; type: string; base_price_per_night: number };
+  roomType: {
+    id: string;
+    name: string;
+    type: string;
+    base_price_per_night: number;
+    ezee_room_type_id: string | null;
+    ezee_rate_plan_id: string | null;
+    ezee_rate_type_id: string | null;
+  };
   quantity: number;
   lineTotal: number;
 }
@@ -28,7 +38,11 @@ interface ValidatedAddon {
 export class GuestBookingService {
   private readonly logger = new Logger(GuestBookingService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+    private readonly ezee: EzeeService,
+  ) {}
 
   // ═══════════════════════════════════════════════════════════════════════════
   // LINK BOOKING (existing ERI → guest)
@@ -132,6 +146,14 @@ export class GuestBookingService {
   // ═══════════════════════════════════════════════════════════════════════════
 
   async getRoomAvailability(propertyId: string, checkinDate: string, checkoutDate: string) {
+    // Check cache first
+    const cacheKey = CacheService.roomAvailabilityKey(propertyId, checkinDate, checkoutDate);
+    const cached = await this.cache.get<any>(cacheKey);
+    if (cached) {
+      this.logger.debug(`Room availability cache hit: ${cacheKey}`);
+      return cached;
+    }
+
     const { checkin, checkout, noOfNights } = this.parseDateRange(checkinDate, checkoutDate);
 
     const roomTypes = await this.prisma.room_types.findMany({
@@ -143,27 +165,59 @@ export class GuestBookingService {
       throw new NotFoundException('No room types found for this property');
     }
 
+    // Get local booked-beds count
     const bookedMap = await this.getBookedBedsMap(propertyId, checkin, checkout, roomTypes);
 
-    return {
+    // Try to get eZee physical room availability for more accurate counts
+    let ezeeAvailMap: Map<string, number> | null = null;
+    try {
+      const ezeeData = await this.ezee.getRoomAvailability(propertyId, checkinDate, checkoutDate);
+      ezeeAvailMap = new Map<string, number>();
+      for (const room of ezeeData.rooms) {
+        ezeeAvailMap.set(room.roomTypeId, room.physicalRooms.length);
+      }
+    } catch (err) {
+      // eZee unavailable — fall back to local DB counts
+      this.logger.warn(`eZee room availability failed, using local data: ${(err as Error).message}`);
+    }
+
+    const result = {
       property_id: propertyId,
       checkin_date: checkinDate,
       checkout_date: checkoutDate,
       no_of_nights: noOfNights,
-      room_types: roomTypes.map((rt) => ({
-        id: rt.id,
-        name: rt.name,
-        slug: rt.slug,
-        type: rt.type,
-        beds_per_room: rt.beds_per_room,
-        total_beds: rt.total_beds,
-        available_beds: Math.max(0, rt.total_beds - (bookedMap.get(rt.id) ?? 0)),
-        base_price_per_night: Number(rt.base_price_per_night),
-        total_price: Number(rt.base_price_per_night) * noOfNights,
-        amenities: rt.amenities,
-        floor_range: rt.floor_range,
-      })),
+      room_types: roomTypes.map((rt) => {
+        // If eZee data available and room type is mapped, use eZee count
+        // Otherwise fall back to local calculation
+        let availableBeds: number;
+        if (ezeeAvailMap && rt.ezee_room_type_id && ezeeAvailMap.has(rt.ezee_room_type_id)) {
+          availableBeds = ezeeAvailMap.get(rt.ezee_room_type_id)!;
+        } else {
+          availableBeds = Math.max(0, rt.total_beds - (bookedMap.get(rt.id) ?? 0));
+        }
+
+        return {
+          id: rt.id,
+          name: rt.name,
+          slug: rt.slug,
+          type: rt.type,
+          beds_per_room: rt.beds_per_room,
+          total_beds: rt.total_beds,
+          available_beds: availableBeds,
+          base_price_per_night: Number(rt.base_price_per_night),
+          total_price: Number(rt.base_price_per_night) * noOfNights,
+          amenities: rt.amenities,
+          floor_range: rt.floor_range,
+          ezee_room_type_id: rt.ezee_room_type_id,
+          ezee_rate_plan_id: rt.ezee_rate_plan_id,
+          ezee_rate_type_id: rt.ezee_rate_type_id,
+        };
+      }),
     };
+
+    // Cache for 30 minutes
+    await this.cache.set(cacheKey, result, CacheService.TTL_ROOM_AVAILABILITY);
+    return result;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -180,7 +234,11 @@ export class GuestBookingService {
     const property = await this.prisma.properties.findUnique({ where: { id: dto.property_id } });
     if (!property) throw new NotFoundException('Property not found');
 
-    // Validate rooms
+    // Invalidate cache so we get fresh availability before booking
+    const cacheKey = CacheService.roomAvailabilityKey(dto.property_id, dto.checkin_date, dto.checkout_date);
+    await this.cache.del(cacheKey);
+
+    // Validate rooms (will fetch fresh data from eZee + DB)
     const availability = await this.getRoomAvailability(dto.property_id, dto.checkin_date, dto.checkout_date);
     const { validatedRooms, roomTotal, totalGuests } = this.validateRoomSelections(
       dto.rooms, availability.room_types, noOfNights,
@@ -214,6 +272,14 @@ export class GuestBookingService {
           status: 'PENDING_PAYMENT',
           is_active: true,
           fetched_at: new Date(),
+          booking_rooms_json: validatedRooms.map((r) => ({
+            room_type_id: r.roomType.id,
+            ezee_room_type_id: r.roomType.ezee_room_type_id,
+            ezee_rate_plan_id: r.roomType.ezee_rate_plan_id,
+            ezee_rate_type_id: r.roomType.ezee_rate_type_id,
+            quantity: r.quantity,
+            price_per_night: Number(r.roomType.base_price_per_night),
+          })),
         },
       });
 
@@ -262,6 +328,9 @@ export class GuestBookingService {
 
       return { addonOrderId };
     });
+
+    // Invalidate cache after booking so next caller gets fresh availability
+    await this.cache.del(cacheKey);
 
     this.logger.log(`Booking order: ERI=${eri}, rooms=${roomTypeSummary}, total=₹${grandTotal}`);
 
@@ -469,7 +538,7 @@ export class GuestBookingService {
 
   private validateRoomSelections(
     selections: { room_type_id: string; quantity: number }[],
-    availableRooms: { id: string; name: string; type: string; available_beds: number; base_price_per_night: number }[],
+    availableRooms: { id: string; name: string; type: string; available_beds: number; base_price_per_night: number; ezee_room_type_id: string | null; ezee_rate_plan_id: string | null; ezee_rate_type_id: string | null }[],
     noOfNights: number,
   ) {
     let roomTotal = 0;
