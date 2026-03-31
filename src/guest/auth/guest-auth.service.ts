@@ -4,6 +4,7 @@ import {
   UnauthorizedException,
   BadRequestException,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -17,6 +18,8 @@ import type { GoogleOAuthUser } from './google.strategy';
 
 @Injectable()
 export class GuestAuthService {
+  private readonly logger = new Logger(GuestAuthService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
@@ -344,6 +347,8 @@ export class GuestAuthService {
   // ─── GOOGLE OAUTH ─────────────────────────────────────────────────────────
 
   async googleLogin(googleUser: GoogleOAuthUser) {
+    this.logger.log(`[GoogleOAuth] Starting login for google_id=${googleUser.google_id}, email=${googleUser.email}, name=${googleUser.name}`);
+
     // 1. Check if this Google ID is already linked
     const existingProvider = await this.prisma.auth_providers.findUnique({
       where: {
@@ -358,11 +363,14 @@ export class GuestAuthService {
     if (existingProvider) {
       // Returning Google user — just issue token
       const guest = existingProvider.guests;
+      this.logger.log(`[GoogleOAuth] Returning user found: guest_id=${guest.id}`);
       return {
         access_token: this.issueToken(guest),
         guest: this.formatGuest(guest),
       };
     }
+
+    this.logger.log(`[GoogleOAuth] No existing provider found, checking email...`);
 
     // 2. No Google provider found — check if email already exists (email/password account)
     let guest = googleUser.email
@@ -370,6 +378,7 @@ export class GuestAuthService {
       : null;
 
     if (guest) {
+      this.logger.log(`[GoogleOAuth] Email match found: guest_id=${guest.id}, linking Google provider...`);
       // Existing email account — link Google as an additional provider
       await this.prisma.auth_providers.create({
         data: {
@@ -379,6 +388,7 @@ export class GuestAuthService {
           provider_uid: googleUser.google_id,
         },
       });
+      this.logger.log(`[GoogleOAuth] Provider linked successfully`);
 
       // Mark email as verified since Google has verified it
       if (!guest.email_verified) {
@@ -389,6 +399,7 @@ export class GuestAuthService {
             profile_photo_url: guest.profile_photo_url ?? googleUser.profile_photo_url,
           },
         });
+        this.logger.log(`[GoogleOAuth] Email marked as verified`);
       }
 
       return {
@@ -398,6 +409,7 @@ export class GuestAuthService {
     }
 
     // 3. Completely new user — create guest + provider in one go
+    this.logger.log(`[GoogleOAuth] New user — creating guest record...`);
     const newId = uuidv4();
     const newGuest = await this.prisma.guests.create({
       data: {
@@ -411,6 +423,7 @@ export class GuestAuthService {
         profile_photo_url: googleUser.profile_photo_url,
       },
     });
+    this.logger.log(`[GoogleOAuth] Guest created: id=${newId}`);
 
     await this.prisma.auth_providers.create({
       data: {
@@ -420,6 +433,7 @@ export class GuestAuthService {
         provider_uid: googleUser.google_id,
       },
     });
+    this.logger.log(`[GoogleOAuth] Provider created. OAuth flow complete.`);
 
     return {
       access_token: this.issueToken(newGuest),

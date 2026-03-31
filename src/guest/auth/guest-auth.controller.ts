@@ -11,14 +11,20 @@ import type { GuestJwtPayload } from '../../common/guards/guest-jwt.strategy';
 import type { GoogleOAuthUser } from './google.strategy';
 
 /**
- * Custom guard that catches ALL passport-level errors and returns null
- * instead of throwing. This lets the controller handle the error
- * by redirecting to the frontend error page.
+ * Custom guard for Google OAuth callback.
+ *
+ * NestJS's default AuthGuard throws UnauthorizedException when passport
+ * fails (canActivate returns false if handleRequest returns falsy).
+ * We override handleRequest to return a sentinel { failed: true } object
+ * on error, so canActivate returns true and the handler gets a chance
+ * to redirect the user to the frontend error page instead of 403/500.
  */
 class GoogleOAuthGuard extends AuthGuard('google') {
-  handleRequest(err: any, user: any) {
+  handleRequest(err: any, user: any, _info: any) {
     if (err || !user) {
-      return null; // Don't throw — let the controller handle it
+      // Return a truthy sentinel so canActivate doesn't throw 403.
+      // The handler checks for .failed to redirect to error page.
+      return { failed: true, error: err?.message || 'No user returned' };
     }
     return user;
   }
@@ -86,25 +92,30 @@ export class GuestAuthController {
   /**
    * Step 2: Google redirects back here after consent.
    *
-   * Uses GoogleOAuthGuard (extends AuthGuard) which overrides handleRequest
-   * to return null on failure instead of throwing. This way:
-   * - Passport errors (code exchange, token exchange) → req.user is null → redirect to error page
-   * - Service errors (DB, JWT) → caught by try/catch → redirect to error page
-   * - Success → redirect to frontend with token
+   * GoogleOAuthGuard ensures passport errors set req.user to a sentinel
+   * { failed: true } instead of throwing. The handler checks this and
+   * redirects to the error page. On success, it processes the login
+   * and redirects to the success page with the JWT.
    */
   @Get('google/callback')
   @UseGuards(GoogleOAuthGuard)
   async googleCallback(@Req() req: Request, @Res() res: Response) {
     const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3000';
+    this.logger.log(`[GoogleOAuth] Callback hit. FRONTEND_URL=${frontendUrl}`);
+    this.logger.log(`[GoogleOAuth] req.user = ${JSON.stringify(req.user)}`);
 
-    const googleUser = req.user as GoogleOAuthUser | null;
+    const user = req.user as any;
 
-    if (!googleUser) {
-      this.logger.error('Google OAuth callback: passport returned no user');
+    // Check if the guard returned our failure sentinel
+    if (!user || user.failed) {
+      this.logger.error(`[GoogleOAuth] Passport auth failed: ${user?.error || 'unknown'}`);
       return res.redirect(`${frontendUrl}/auth/google/error?reason=auth_failed`);
     }
 
+    const googleUser = user as GoogleOAuthUser;
+
     try {
+      this.logger.log(`[GoogleOAuth] Processing login for: ${googleUser.email}`);
       const result = await this.guestAuthService.googleLogin(googleUser);
 
       const redirect =
@@ -112,10 +123,11 @@ export class GuestAuthController {
         `?token=${result.access_token}` +
         `&name=${encodeURIComponent(result.guest.name)}`;
 
+      this.logger.log(`[GoogleOAuth] Success — redirecting to frontend`);
       return res.redirect(redirect);
     } catch (err) {
       this.logger.error(
-        'Google OAuth login processing failed:',
+        '[GoogleOAuth] Login processing failed:',
         err instanceof Error ? err.stack : err,
       );
       return res.redirect(`${frontendUrl}/auth/google/error?reason=login_failed`);
