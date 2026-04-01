@@ -16,7 +16,6 @@ interface ValidatedRoom {
   roomType: {
     id: string;
     name: string;
-    type: string;
     base_price_per_night: number;
     ezee_room_type_id: string | null;
     ezee_rate_plan_id: string | null;
@@ -154,31 +153,54 @@ export class GuestBookingService {
       return cached;
     }
 
-    const { checkin, checkout, noOfNights } = this.parseDateRange(checkinDate, checkoutDate);
+    const { noOfNights } = this.parseDateRange(checkinDate, checkoutDate);
 
-    const roomTypes = await this.prisma.room_types.findMany({
-      where: { property_id: propertyId, is_active: true },
-      orderBy: { base_price_per_night: 'asc' },
-    });
+    // eZee is the single source of truth — room types, availability, and pricing
+    // all come from eZee. Local DB is only a last-resort fallback if eZee is down.
 
-    if (roomTypes.length === 0) {
-      throw new NotFoundException('No room types found for this property');
-    }
+    let resultRoomTypes: any[];
 
-    // Get local booked-beds count
-    const bookedMap = await this.getBookedBedsMap(propertyId, checkin, checkout, roomTypes);
-
-    // Try to get eZee physical room availability for more accurate counts
-    let ezeeAvailMap: Map<string, number> | null = null;
     try {
-      const ezeeData = await this.ezee.getRoomAvailability(propertyId, checkinDate, checkoutDate);
-      ezeeAvailMap = new Map<string, number>();
-      for (const room of ezeeData.rooms) {
-        ezeeAvailMap.set(room.roomTypeId, room.physicalRooms.length);
-      }
+      const inventory = await this.ezee.getRoomInventory(propertyId, checkinDate, checkoutDate);
+
+      resultRoomTypes = inventory.rooms.map((room) => ({
+        id: room.roomTypeId,
+        name: room.roomTypeName,
+        available_beds: room.availability,
+        base_price_per_night: room.ratePerNight,
+        total_price: room.ratePerNight * noOfNights,
+        ezee_room_type_id: room.roomTypeId,
+        ezee_rate_plan_id: room.ratePlanId,
+        ezee_rate_type_id: room.rateTypeId,
+      }));
+
+      this.logger.debug(`Room availability from eZee: ${resultRoomTypes.map(r => `${r.name}=${r.available_beds}@₹${r.base_price_per_night}`).join(', ')}`);
     } catch (err) {
-      // eZee unavailable — fall back to local DB counts
-      this.logger.warn(`eZee room availability failed, using local data: ${(err as Error).message}`);
+      // eZee unreachable — fall back to local DB so the app doesn't break
+      this.logger.warn(`eZee unavailable, falling back to local DB: ${(err as Error).message}`);
+
+      const roomTypes = await this.prisma.room_types.findMany({
+        where: { property_id: propertyId, is_active: true },
+        orderBy: { base_price_per_night: 'asc' },
+      });
+
+      if (roomTypes.length === 0) {
+        throw new NotFoundException('No room types found for this property');
+      }
+
+      const { checkin, checkout } = this.parseDateRange(checkinDate, checkoutDate);
+      const bookedMap = await this.getBookedBedsMap(propertyId, checkin, checkout, roomTypes);
+
+      resultRoomTypes = roomTypes.map((rt) => ({
+        id: rt.id,
+        name: rt.name,
+        available_beds: Math.max(0, rt.total_beds - (bookedMap.get(rt.id) ?? 0)),
+        base_price_per_night: Number(rt.base_price_per_night),
+        total_price: Number(rt.base_price_per_night) * noOfNights,
+        ezee_room_type_id: rt.ezee_room_type_id,
+        ezee_rate_plan_id: rt.ezee_rate_plan_id,
+        ezee_rate_type_id: rt.ezee_rate_type_id,
+      }));
     }
 
     const result = {
@@ -186,33 +208,7 @@ export class GuestBookingService {
       checkin_date: checkinDate,
       checkout_date: checkoutDate,
       no_of_nights: noOfNights,
-      room_types: roomTypes.map((rt) => {
-        // If eZee data available and room type is mapped, use eZee count
-        // Otherwise fall back to local calculation
-        let availableBeds: number;
-        if (ezeeAvailMap && rt.ezee_room_type_id && ezeeAvailMap.has(rt.ezee_room_type_id)) {
-          availableBeds = ezeeAvailMap.get(rt.ezee_room_type_id)!;
-        } else {
-          availableBeds = Math.max(0, rt.total_beds - (bookedMap.get(rt.id) ?? 0));
-        }
-
-        return {
-          id: rt.id,
-          name: rt.name,
-          slug: rt.slug,
-          type: rt.type,
-          beds_per_room: rt.beds_per_room,
-          total_beds: rt.total_beds,
-          available_beds: availableBeds,
-          base_price_per_night: Number(rt.base_price_per_night),
-          total_price: Number(rt.base_price_per_night) * noOfNights,
-          amenities: rt.amenities,
-          floor_range: rt.floor_range,
-          ezee_room_type_id: rt.ezee_room_type_id,
-          ezee_rate_plan_id: rt.ezee_rate_plan_id,
-          ezee_rate_type_id: rt.ezee_rate_type_id,
-        };
-      }),
+      room_types: resultRoomTypes,
     };
 
     // Cache for 30 minutes
@@ -345,7 +341,6 @@ export class GuestBookingService {
       rooms: validatedRooms.map((r) => ({
         room_type_id: r.roomType.id,
         room_type_name: r.roomType.name,
-        type: r.roomType.type,
         quantity: r.quantity,
         price_per_night: r.roomType.base_price_per_night,
         line_total: r.lineTotal,
@@ -538,7 +533,7 @@ export class GuestBookingService {
 
   private validateRoomSelections(
     selections: { room_type_id: string; quantity: number }[],
-    availableRooms: { id: string; name: string; type: string; available_beds: number; base_price_per_night: number; ezee_room_type_id: string | null; ezee_rate_plan_id: string | null; ezee_rate_type_id: string | null }[],
+    availableRooms: { id: string; name: string; available_beds: number; base_price_per_night: number; ezee_room_type_id: string | null; ezee_rate_plan_id: string | null; ezee_rate_type_id: string | null }[],
     noOfNights: number,
   ) {
     let roomTotal = 0;

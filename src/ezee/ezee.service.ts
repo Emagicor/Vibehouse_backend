@@ -6,6 +6,7 @@ import {
   EzeeInsertBookingResult,
   EzeeRoomAssignment,
   EzeeRoomAvailabilityResult,
+  EzeeRoomInventoryResult,
 } from './ezee.types';
 
 /**
@@ -89,6 +90,88 @@ export class EzeeService {
         })),
       })),
     };
+  }
+
+  // ── 1b. Room Inventory (availability + rates) ───────────────────────────
+
+  /**
+   * Fetches room type inventory with availability counts and nightly rates
+   * from eZee's RetrieveRoomInventory reservation API.
+   * Returns the minimum availability and average rate across all nights.
+   */
+  async getRoomInventory(
+    propertyId: string,
+    checkin: string,
+    checkout: string,
+  ): Promise<EzeeRoomInventoryResult> {
+    const { hotelCode, authCode, baseUrl } = await this.getConnection(propertyId);
+
+    const url = `${baseUrl}${EzeeService.RESERVATION_PATH}?request_type=RetrieveRoomInventory&HotelCode=${hotelCode}&APIKey=${authCode}&FromDate=${this.toEzeeDate(checkin)}&ToDate=${this.toEzeeDate(checkout)}`;
+
+    const resp = await fetch(url);
+    const data = await resp.json();
+
+    // Error check — reservation API errors
+    if (data.Error_Details) {
+      throw new EzeeApiError(
+        data.Error_Details.Error_Code ?? 'UNKNOWN',
+        data.Error_Details.Error_Message ?? JSON.stringify(data),
+        'RetrieveRoomInventory',
+      );
+    }
+
+    // Response shape: { "RoomTypeID": { "RoomTypeName": "...", "DD/MM/YYYY": { "Availability": "5", "RatePlanID": { "Rate": "449", ... } } } }
+    const rooms: EzeeRoomInventoryResult['rooms'] = [];
+
+    for (const [roomTypeId, roomData] of Object.entries(data)) {
+      if (typeof roomData !== 'object' || roomData === null) continue;
+      const rd = roomData as any;
+      if (!rd.RoomTypeName) continue;
+
+      let minAvailability = Infinity;
+      let totalRate = 0;
+      let rateCount = 0;
+      let ratePlanId = '';
+      let rateTypeId = '';
+
+      for (const [key, dateData] of Object.entries(rd)) {
+        if (key === 'RoomTypeName') continue;
+        const dd = dateData as any;
+        if (dd?.Availability !== undefined) {
+          const avail = Number(dd.Availability);
+          if (avail < minAvailability) minAvailability = avail;
+
+          // Extract rate from the first rate plan found
+          for (const [rpKey, rpVal] of Object.entries(dd)) {
+            if (rpKey === 'Availability') continue;
+            const rp = rpVal as any;
+            if (rp?.Rate !== undefined) {
+              totalRate += Number(rp.Rate);
+              rateCount++;
+              if (!ratePlanId) {
+                ratePlanId = rpKey;
+                rateTypeId = rp.RateTypeId ?? rpKey;
+              }
+              break; // use first rate plan
+            }
+          }
+        }
+      }
+
+      if (minAvailability === Infinity) continue;
+
+      rooms.push({
+        roomTypeId,
+        roomTypeName: rd.RoomTypeName,
+        availability: minAvailability,
+        ratePerNight: rateCount > 0 ? Math.round(totalRate / rateCount) : 0,
+        ratePlanId,
+        rateTypeId,
+      });
+    }
+
+    this.logger.debug(`eZee RoomInventory: ${rooms.map(r => `${r.roomTypeName}=${r.availability}@₹${r.ratePerNight}`).join(', ')}`);
+    return { rooms };
   }
 
   // ── 2. Insert Booking ────────────────────────────────────────────────────

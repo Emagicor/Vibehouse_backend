@@ -19,6 +19,21 @@ export interface EzeeRoomAvailabilityResult {
   rooms: EzeeRoomTypeAvailability[];
 }
 
+// ── Room Inventory (availability + rates) ─────────────────────────────────
+
+export interface EzeeRoomInventoryEntry {
+  roomTypeId: string;
+  roomTypeName: string;
+  availability: number;
+  ratePerNight: number;
+  ratePlanId: string;
+  rateTypeId: string;
+}
+
+export interface EzeeRoomInventoryResult {
+  rooms: EzeeRoomInventoryEntry[];
+}
+
 // ── Insert Booking ─────────────────────────────────────────────────────────
 
 export interface EzeeBookingRoom {
