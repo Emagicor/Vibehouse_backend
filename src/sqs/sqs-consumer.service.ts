@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
 import {
   SQSClient,
   ReceiveMessageCommand,
@@ -26,7 +26,7 @@ interface QueueConsumerConfig {
 }
 
 @Injectable()
-export class SqsConsumerService implements OnModuleInit, OnModuleDestroy {
+export class SqsConsumerService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(SqsConsumerService.name);
   private readonly sqs: SQSClient;
   private running = false;
@@ -50,7 +50,7 @@ export class SqsConsumerService implements OnModuleInit, OnModuleDestroy {
     this.consumers.push(config);
   }
 
-  async onModuleInit(): Promise<void> {
+  async onApplicationBootstrap(): Promise<void> {
     const enabled = process.env.SQS_CONSUMERS_ENABLED !== 'false';
     if (!enabled) {
       this.logger.warn('SQS consumers DISABLED (SQS_CONSUMERS_ENABLED=false)');
