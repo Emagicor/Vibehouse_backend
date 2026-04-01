@@ -247,7 +247,7 @@ export class GuestBookingService {
     );
 
     const grandTotal = roomTotal + addonTotal;
-    const eri = this.generateERI(dto.property_id);
+    const eri = this.generateERI(property.city);
     const roomTypeSummary = validatedRooms.map((r) => `${r.roomType.name} x${r.quantity}`).join(', ');
 
     // Persist everything in a transaction
@@ -428,10 +428,11 @@ export class GuestBookingService {
 
   // ─── ERI generation ───────────────────────────────────────────────────────
 
-  private generateERI(propertyId: string): string {
+  private generateERI(propertyCity: string): string {
     const timestamp = Date.now().toString(36).toUpperCase();
     const random = uuidv4().slice(0, 4).toUpperCase();
-    const code = propertyId.split('-')[1]?.toUpperCase() ?? 'VH';
+    // Derive short code from city name: "Kormangala" → "KORMANGALA", "Bandra" → "BANDRA"
+    const code = propertyCity.toUpperCase().replace(/\s+/g, '').slice(0, 10);
     return `VH-${code}-${timestamp}-${random}`;
   }
 

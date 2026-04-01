@@ -340,6 +340,66 @@ export class EzeeService {
     return data.Reservations?.Reservation?.[0] ?? null;
   }
 
+  // ── 7. Fetch Reservations by Date Range ──────────────────────────────────
+
+  /**
+   * Returns all reservations arriving or in-house between fromDate and toDate.
+   * Used by reconciliation to detect cancellations, check-ins, check-outs
+   * that happened in eZee outside our system.
+   *
+   * eZee CurrentStatus values:
+   *   "Confirmed Reservation" → CONFIRMED
+   *   "Cancelled Reservation" → CANCELLED
+   *   "Checked In"            → CHECKED_IN
+   *   "Checked Out"           → CHECKED_OUT
+   *   "No Show"               → NO_SHOW
+   */
+  async fetchReservationsByDateRange(
+    propertyId: string,
+    fromDate: string,
+    toDate: string,
+  ): Promise<Array<{ reservationNo: string; status: string; roomName: string | null }>> {
+    const { hotelCode, authCode, baseUrl } = await this.getConnection(propertyId);
+
+    const body = {
+      RES_Request: {
+        Request_Type: 'FetchReservation',
+        Authentication: { HotelCode: hotelCode, AuthCode: authCode },
+        ReservationData: {
+          ArrivalDateFrom: fromDate,
+          ArrivalDateTo: toDate,
+        },
+      },
+    };
+
+    const resp = await fetch(`${baseUrl}${EzeeService.PMS_PATH}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const data = await resp.json();
+
+    if (data.Errors?.ErrorCode && data.Errors.ErrorCode !== '0') {
+      throw new EzeeApiError(data.Errors.ErrorCode, data.Errors.ErrorMessage, 'FetchReservation');
+    }
+
+    const reservations = data.Reservations?.Reservation ?? [];
+    const results: Array<{ reservationNo: string; status: string; roomName: string | null }> = [];
+
+    for (const res of reservations) {
+      for (const tran of (res.BookingTran ?? [])) {
+        results.push({
+          reservationNo: String(res.UniqueID),
+          status: tran.CurrentStatus ?? '',
+          roomName: tran.RoomName ?? null,
+        });
+      }
+    }
+
+    return results;
+  }
+
   // ── Error checking ───────────────────────────────────────────────────────
 
   private checkKioskError(data: any, endpoint: string): void {
