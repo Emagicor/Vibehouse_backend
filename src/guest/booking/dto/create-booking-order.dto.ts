@@ -7,8 +7,23 @@ import {
   IsInt,
   Min,
   IsOptional,
+  IsIn,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+export class GuestDetailDto {
+  @IsString()
+  @IsNotEmpty()
+  first_name: string;
+
+  @IsString()
+  @IsNotEmpty()
+  last_name: string;
+
+  @IsOptional()
+  @IsIn(['Male', 'Female', 'Other'])
+  gender?: string;
+}
 
 export class RoomSelectionDto {
   @IsString()
@@ -18,6 +33,16 @@ export class RoomSelectionDto {
   @IsInt()
   @Min(1)
   quantity: number; // number of beds (dorm) or rooms (private)
+
+  /**
+   * Per-bed guest details. Length must equal quantity.
+   * If omitted, the booker's name is used for all beds.
+   */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => GuestDetailDto)
+  guests?: GuestDetailDto[];
 }
 
 export class AddonSelectionDto {

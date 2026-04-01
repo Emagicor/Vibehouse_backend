@@ -208,13 +208,26 @@ export class EzeeSyncWorker implements SqsWorker {
       }
 
       // ── Step 5: AddPayment ────────────────────────────────────────────
-      const primaryBookingId = subReservationNos[0] ?? reservationNo;
-      this.logger.log(`eZee AddPayment: Booking ${primaryBookingId}, ₹${payload.amount}`);
-      try {
-        await this.ezee.addPayment(property_id, primaryBookingId, payload.amount);
-      } catch (err) {
-        // AddPayment failure is non-fatal — folio can be updated manually
-        this.logger.warn(`eZee AddPayment failed for ${eri}: ${(err as Error).message}`);
+      // Split payment evenly across all sub-reservations.
+      // eZee creates one sub-reservation per bed (30-1, 30-2, ...) and
+      // each needs its own payment entry in the folio.
+      const paymentTargets = subReservationNos.length > 0 ? subReservationNos : [reservationNo];
+      const amountPerBed = Math.floor(payload.amount / paymentTargets.length);
+
+      for (let i = 0; i < paymentTargets.length; i++) {
+        // Last sub-reservation gets any remainder from rounding
+        const amount = i === paymentTargets.length - 1
+          ? payload.amount - amountPerBed * i
+          : amountPerBed;
+
+        this.logger.log(`eZee AddPayment: ${paymentTargets[i]}, ₹${amount} (${i + 1}/${paymentTargets.length})`);
+        try {
+          await this.ezee.addPayment(property_id, paymentTargets[i], amount);
+          if (i < paymentTargets.length - 1) await this.delay(1000); // brief pause between calls
+        } catch (err) {
+          // AddPayment failure is non-fatal — folio can be updated manually
+          this.logger.warn(`eZee AddPayment failed for ${paymentTargets[i]}: ${(err as Error).message}`);
+        }
       }
 
       // ── Done ──────────────────────────────────────────────────────────
@@ -295,8 +308,8 @@ export class EzeeSyncWorker implements SqsWorker {
     ezeeRateTypeId: string;
     quantity: number;
     pricePerNight: number;
+    guests?: Array<{ first_name: string; last_name: string; gender?: string }>;
   }> {
-    // Try structured JSON first
     if (booking.booking_rooms_json) {
       const rooms = typeof booking.booking_rooms_json === 'string'
         ? JSON.parse(booking.booking_rooms_json)
@@ -307,10 +320,10 @@ export class EzeeSyncWorker implements SqsWorker {
         ezeeRateTypeId: r.ezee_rate_type_id ?? r.ezee_rate_plan_id,
         quantity: r.quantity,
         pricePerNight: r.price_per_night,
+        guests: r.guests ?? null,
       }));
     }
 
-    // Fallback: no structured data available
     this.logger.warn(`No booking_rooms_json for ${booking.ezee_reservation_id} — cannot parse rooms`);
     return [];
   }
@@ -322,6 +335,7 @@ export class EzeeSyncWorker implements SqsWorker {
       ezeeRateTypeId: string;
       quantity: number;
       pricePerNight: number;
+      guests?: Array<{ first_name: string; last_name: string; gender?: string }>;
     }>,
     numberOfNights: number,
     defaultFirstName: string,
@@ -330,6 +344,13 @@ export class EzeeSyncWorker implements SqsWorker {
     const rooms: any[] = [];
     for (const sel of roomSelections) {
       for (let q = 0; q < sel.quantity; q++) {
+        // Use per-guest details if provided, otherwise fall back to booker name
+        const guestDetail = sel.guests?.[q];
+        const firstName = guestDetail?.first_name ?? defaultFirstName;
+        const lastName = guestDetail?.last_name ?? defaultLastName;
+        const gender = guestDetail?.gender ?? 'Male';
+        const title = gender === 'Female' ? 'Ms' : 'Mr';
+
         rooms.push({
           ezeeRoomTypeId: sel.ezeeRoomTypeId,
           ezeeRatePlanId: sel.ezeeRatePlanId,
@@ -338,10 +359,10 @@ export class EzeeSyncWorker implements SqsWorker {
           children: 0,
           ratePerNight: sel.pricePerNight,
           numberOfNights,
-          guestTitle: 'Mr',
-          guestFirstName: defaultFirstName,
-          guestLastName: defaultLastName,
-          guestGender: 'Male',
+          guestTitle: title,
+          guestFirstName: firstName,
+          guestLastName: lastName,
+          guestGender: gender,
         });
       }
     }

@@ -23,6 +23,7 @@ interface ValidatedRoom {
   };
   quantity: number;
   lineTotal: number;
+  guests?: { first_name: string; last_name: string; gender?: string }[];
 }
 
 interface ValidatedAddon {
@@ -275,6 +276,7 @@ export class GuestBookingService {
             ezee_rate_type_id: r.roomType.ezee_rate_type_id,
             quantity: r.quantity,
             price_per_night: Number(r.roomType.base_price_per_night),
+            guests: r.guests ?? null,
           })),
         },
       });
@@ -532,7 +534,7 @@ export class GuestBookingService {
   // ─── Room validation ──────────────────────────────────────────────────────
 
   private validateRoomSelections(
-    selections: { room_type_id: string; quantity: number }[],
+    selections: { room_type_id: string; quantity: number; guests?: { first_name: string; last_name: string; gender?: string }[] }[],
     availableRooms: { id: string; name: string; available_beds: number; base_price_per_night: number; ezee_room_type_id: string | null; ezee_rate_plan_id: string | null; ezee_rate_type_id: string | null }[],
     noOfNights: number,
   ) {
@@ -550,10 +552,16 @@ export class GuestBookingService {
         );
       }
 
+      if (sel.guests && sel.guests.length !== sel.quantity) {
+        throw new BadRequestException(
+          `"${rt.name}" — guests array length (${sel.guests.length}) must match quantity (${sel.quantity})`,
+        );
+      }
+
       const lineTotal = rt.base_price_per_night * noOfNights * sel.quantity;
       roomTotal += lineTotal;
       totalGuests += sel.quantity;
-      validatedRooms.push({ roomType: rt, quantity: sel.quantity, lineTotal });
+      validatedRooms.push({ roomType: rt, quantity: sel.quantity, lineTotal, guests: sel.guests });
     }
 
     return { validatedRooms, roomTotal, totalGuests };
