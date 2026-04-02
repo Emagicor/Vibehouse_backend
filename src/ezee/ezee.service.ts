@@ -153,14 +153,19 @@ export class EzeeService {
     const roomDetails: Record<string, any> = {};
     for (let i = 0; i < input.rooms.length; i++) {
       const room = input.rooms[i];
-      const totalRate = room.ratePerNight * room.numberOfNights;
+      // eZee requires comma-separated per-night values — one entry per night.
+      // All three rate arrays must have the same length as numberOfNights.
+      // e.g. 2 nights at ₹500: baserate="500,500", extradultrate="0,0"
+      const nights = Math.max(1, room.numberOfNights);
+      const rateStr = Array(nights).fill(String(Math.round(room.ratePerNight))).join(',');
+      const zeroStr = Array(nights).fill('0').join(',');
       roomDetails[`Room_${i + 1}`] = {
         Rateplan_Id: room.ezeeRatePlanId,
         Ratetype_Id: room.ezeeRateTypeId,
         Roomtype_Id: room.ezeeRoomTypeId,
-        baserate: String(totalRate),
-        extradultrate: '0',
-        extrachildrate: '0',
+        baserate: rateStr,
+        extradultrate: zeroStr,
+        extrachildrate: zeroStr,
         number_adults: String(room.adults),
         number_children: String(room.children),
         ExtraChild_Age: '',

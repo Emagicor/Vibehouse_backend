@@ -87,10 +87,9 @@ export class EzeeSyncWorker implements SqsWorker {
   /**
    * Full booking sync flow:
    * 1. InsertBooking → get ReservationNo
-   * 2. ProcessBooking → confirm
-   * 3. RoomAvailability → find free rooms
-   * 4. AssignRoom → assign physical rooms
-   * 5. AddPayment → record in folio
+   * 2. ProcessBooking → confirm (eZee auto-assigns room)
+   * 3. FetchSingleBooking → capture auto-assigned room name/ID
+   * 4. AddPayment → record in folio
    *
    * Idempotent: checks ezee_reservation_no to skip already-completed steps.
    */
@@ -116,8 +115,8 @@ export class EzeeSyncWorker implements SqsWorker {
     const syncLogId = await this.createSyncLog('booking', eri, 'INSERT_BOOKING');
 
     try {
-      // Parse room selections from booking_rooms_json
-      const roomSelections = this.parseBookingRooms(booking);
+      // Parse room selections from booking_rooms_json (with DB fallback for older bookings)
+      const roomSelections = await this.parseBookingRooms(booking);
       if (roomSelections.length === 0) {
         throw new Error(`No room selections found for booking ${eri}`);
       }
@@ -169,45 +168,32 @@ export class EzeeSyncWorker implements SqsWorker {
       }
 
       // ── Step 2: ProcessBooking (Confirm) ──────────────────────────────
+      // eZee auto-assigns a room when the booking is confirmed.
       this.logger.log(`eZee ProcessBooking: confirming ${reservationNo}`);
       await this.ezee.processBooking(property_id, reservationNo);
       await this.delay();
 
-      // ── Step 3: RoomAvailability → pick rooms ─────────────────────────
-      const checkinStr = this.formatDate(booking.checkin_date);
-      const checkoutStr = this.formatDate(booking.checkout_date);
-      const availability = await this.ezee.getRoomAvailability(property_id, checkinStr, checkoutStr);
-      await this.delay();
-
-      // ── Step 4: AssignRoom ────────────────────────────────────────────
-      const assignments = this.pickRoomsForAssignment(
-        roomSelections,
-        subReservationNos,
-        availability,
-      );
-
-      if (assignments.length > 0) {
-        this.logger.log(`eZee AssignRoom: ${assignments.length} assignment(s) for ${eri}`);
-        try {
-          await this.ezee.assignRoom(property_id, assignments);
-
-          // Update booking cache with room info
-          const roomNumbers = assignments.map((a) => a.roomName).join(', ');
+      // ── Step 3: FetchSingleBooking → capture auto-assigned room ───────
+      try {
+        const reservationData = await this.ezee.fetchBooking(property_id, reservationNo);
+        const tran = reservationData?.BookingTran?.[0];
+        if (tran?.RoomName) {
           await this.prisma.ezee_booking_cache.update({
             where: { ezee_reservation_id: eri },
             data: {
-              room_number: roomNumbers,
-              unit_code: assignments[0]?.roomId ?? null,
+              room_number: tran.RoomName,
+              unit_code: tran.RoomID ?? null,
             },
           });
-        } catch (err) {
-          // AssignRoom failure is non-fatal — front desk can assign manually
-          this.logger.warn(`eZee AssignRoom partial failure for ${eri}: ${(err as Error).message}`);
+          this.logger.log(`eZee room auto-assigned: ${tran.RoomName} (${tran.RoomID}) for ${eri}`);
         }
-        await this.delay();
+      } catch (err) {
+        // Non-fatal — room info can be looked up in eZee UI
+        this.logger.warn(`eZee FetchSingleBooking failed for ${eri}: ${(err as Error).message}`);
       }
+      await this.delay();
 
-      // ── Step 5: AddPayment ────────────────────────────────────────────
+      // ── Step 4: AddPayment ────────────────────────────────────────────
       // Split payment evenly across all sub-reservations.
       // eZee creates one sub-reservation per bed (30-1, 30-2, ...) and
       // each needs its own payment entry in the folio.
@@ -234,7 +220,9 @@ export class EzeeSyncWorker implements SqsWorker {
       await this.updateSyncLog(syncLogId, 'SUCCESS');
 
       // Invalidate room availability cache for this property + date range
-      const cacheKey = CacheService.roomAvailabilityKey(property_id, checkinStr, checkoutStr);
+      const checkin = this.formatDate(booking.checkin_date);
+      const checkout = this.formatDate(booking.checkout_date);
+      const cacheKey = CacheService.roomAvailabilityKey(property_id, checkin, checkout);
       await this.cache.del(cacheKey);
 
       this.logger.log(`eZee booking sync complete: ERI=${eri}, eZee=${reservationNo}`);
@@ -302,14 +290,14 @@ export class EzeeSyncWorker implements SqsWorker {
 
   // ── Room picking helpers ─────────────────────────────────────────────────
 
-  private parseBookingRooms(booking: any): Array<{
+  private async parseBookingRooms(booking: any): Promise<Array<{
     ezeeRoomTypeId: string;
     ezeeRatePlanId: string;
     ezeeRateTypeId: string;
     quantity: number;
     pricePerNight: number;
     guests?: Array<{ first_name: string; last_name: string; gender?: string }>;
-  }> {
+  }>> {
     if (booking.booking_rooms_json) {
       const rooms = typeof booking.booking_rooms_json === 'string'
         ? JSON.parse(booking.booking_rooms_json)
@@ -324,8 +312,46 @@ export class EzeeSyncWorker implements SqsWorker {
       }));
     }
 
-    this.logger.warn(`No booking_rooms_json for ${booking.ezee_reservation_id} — cannot parse rooms`);
-    return [];
+    // Fallback for older bookings without booking_rooms_json:
+    // parse room_type_name string ("6 Bed Mixed Dormitory x1, Queen Size Room x1")
+    // and look up eZee IDs from the room_types table.
+    this.logger.warn(`No booking_rooms_json for ${booking.ezee_reservation_id} — falling back to room_type_name parsing`);
+
+    if (!booking.room_type_name) return [];
+
+    const dbRoomTypes = await this.prisma.room_types.findMany({
+      where: { property_id: booking.property_id, is_active: true },
+    });
+
+    const selections: Array<{
+      ezeeRoomTypeId: string;
+      ezeeRatePlanId: string;
+      ezeeRateTypeId: string;
+      quantity: number;
+      pricePerNight: number;
+    }> = [];
+
+    for (const segment of (booking.room_type_name as string).split(',')) {
+      const match = segment.trim().match(/^(.+?)\s+x(\d+)$/i);
+      if (!match) continue;
+      const [, name, qtyStr] = match;
+      const rt = dbRoomTypes.find(
+        (r) => r.name.toLowerCase() === name.toLowerCase().trim(),
+      );
+      if (!rt) {
+        this.logger.warn(`Room type "${name}" not found in DB for fallback parsing`);
+        continue;
+      }
+      selections.push({
+        ezeeRoomTypeId: rt.ezee_room_type_id ?? '',
+        ezeeRatePlanId: rt.ezee_rate_plan_id ?? '',
+        ezeeRateTypeId: rt.ezee_rate_type_id ?? rt.ezee_rate_plan_id ?? '',
+        quantity: parseInt(qtyStr, 10),
+        pricePerNight: Number(rt.base_price_per_night),
+      });
+    }
+
+    return selections;
   }
 
   private buildEzeeRooms(
@@ -367,46 +393,6 @@ export class EzeeSyncWorker implements SqsWorker {
       }
     }
     return rooms;
-  }
-
-  private pickRoomsForAssignment(
-    roomSelections: Array<{ ezeeRoomTypeId: string; quantity: number }>,
-    subReservationNos: string[],
-    availability: { rooms: Array<{ roomTypeId: string; physicalRooms: Array<{ roomId: string; roomName: string }> }> },
-  ): Array<{ bookingId: string; roomTypeId: string; roomId: string; roomName: string }> {
-    const assignments: Array<{ bookingId: string; roomTypeId: string; roomId: string; roomName: string }> = [];
-
-    // Track which physical rooms we've already picked
-    const usedRoomIds = new Set<string>();
-    let subIdx = 0;
-
-    for (const sel of roomSelections) {
-      const availableType = availability.rooms.find((r) => r.roomTypeId === sel.ezeeRoomTypeId);
-      if (!availableType) {
-        this.logger.warn(`No available rooms for eZee room type ${sel.ezeeRoomTypeId}`);
-        continue;
-      }
-
-      for (let q = 0; q < sel.quantity; q++) {
-        const freeRoom = availableType.physicalRooms.find((r) => !usedRoomIds.has(r.roomId));
-        if (!freeRoom) {
-          this.logger.warn(`No free physical room for type ${sel.ezeeRoomTypeId} (needed ${sel.quantity}, got ${q})`);
-          break;
-        }
-
-        usedRoomIds.add(freeRoom.roomId);
-        const bookingId = subReservationNos[subIdx] ?? subReservationNos[0];
-        assignments.push({
-          bookingId,
-          roomTypeId: sel.ezeeRoomTypeId,
-          roomId: freeRoom.roomId,
-          roomName: freeRoom.roomName,
-        });
-        subIdx++;
-      }
-    }
-
-    return assignments;
   }
 
   private calcNights(checkin: Date | null | undefined, checkout: Date | null | undefined): number {

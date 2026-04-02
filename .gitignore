@@ -30,3 +30,6 @@ coverage/
 
 # TypeScript
 *.tsbuildinfo
+
+# Test Scripts
+test_Scripts/
