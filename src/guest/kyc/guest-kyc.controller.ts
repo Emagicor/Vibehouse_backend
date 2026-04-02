@@ -48,6 +48,21 @@ export class GuestKycController {
   }
 
   /**
+   * GET /guest/kyc/:eri/slots/:slotId/documents
+   * Get presigned S3 download/preview URLs for the guest's own KYC documents.
+   * URLs expire in 15 minutes.
+   * MUST be declared before GET :eri/slots/:slotId to prevent "documents" being matched as slotId.
+   */
+  @Get(':eri/slots/:slotId/documents')
+  getDocumentUrls(
+    @CurrentGuest() guest: GuestJwtPayload,
+    @Param('eri') eri: string,
+    @Param('slotId') slotId: string,
+  ) {
+    return this.kycService.getDocumentUrls(guest.guest_id, eri, slotId);
+  }
+
+  /**
    * GET /guest/kyc/:eri/slots/:slotId
    * Get full KYC details for a specific slot.
    */

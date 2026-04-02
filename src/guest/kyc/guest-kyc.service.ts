@@ -149,7 +149,35 @@ export class GuestKycService {
     };
   }
 
-  // ── Route 3: Get Presigned Upload URL ───────────────────────────────────
+  // ── Route 3: Get Presigned Document URLs (download/preview) ─────────────
+
+  async getDocumentUrls(guestId: string, eri: string, slotId: string) {
+    await this.verifyBookingAccess(guestId, eri);
+
+    const kyc = await this.prisma.kyc_submissions.findFirst({
+      where: { slot_id: slotId, ezee_reservation_id: eri },
+      orderBy: { created_at: 'desc' },
+    });
+
+    if (!kyc) throw new NotFoundException('No KYC submission found for this slot');
+
+    const frontUrl = kyc.front_image_url
+      ? await this.s3.getPresignedDownloadUrl(this.s3.extractKey(kyc.front_image_url))
+      : null;
+
+    const backUrl = kyc.back_image_url
+      ? await this.s3.getPresignedDownloadUrl(this.s3.extractKey(kyc.back_image_url))
+      : null;
+
+    return {
+      slot_id: slotId,
+      front_image_url: frontUrl,
+      back_image_url: backUrl,
+      expires_in_seconds: 900,
+    };
+  }
+
+  // ── Route 4: Get Presigned Upload URL ───────────────────────────────────
 
   async getUploadUrl(
     guestId: string,

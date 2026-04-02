@@ -3,6 +3,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  DeleteObjectCommand,
   PutBucketCorsCommand,
   GetBucketCorsCommand,
 } from '@aws-sdk/client-s3';
@@ -179,6 +180,38 @@ export class S3Service implements OnModuleInit {
       stream: response.Body as Readable,
       contentType: response.ContentType ?? 'application/octet-stream',
     };
+  }
+
+  /**
+   * Generate a presigned GET URL for viewing/downloading a file.
+   * Default TTL 15 minutes — long enough to open in a browser tab.
+   */
+  async getPresignedDownloadUrl(
+    key: string,
+    expiresIn = 900,
+  ): Promise<string> {
+    const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
+    return getSignedUrl(this.s3, command, { expiresIn });
+  }
+
+  /**
+   * Delete an object from S3 by key.
+   */
+  async deleteObject(key: string): Promise<void> {
+    await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
+    this.logger.log(`S3 object deleted: ${key}`);
+  }
+
+  /**
+   * Extract the S3 key from either a full S3 URL or a bare key.
+   * e.g. "https://bucket.s3.region.amazonaws.com/kyc/ERI/uuid.jpg" → "kyc/ERI/uuid.jpg"
+   */
+  extractKey(urlOrKey: string): string {
+    if (urlOrKey.startsWith('http')) {
+      const url = new URL(urlOrKey);
+      return url.pathname.replace(/^\//, '');
+    }
+    return urlOrKey;
   }
 
   /**

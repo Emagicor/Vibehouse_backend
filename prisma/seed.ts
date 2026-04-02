@@ -46,6 +46,7 @@ async function main() {
         'maintenance.tickets',
         'bookings.view', 'bookings.create',
         'events.view', 'events.edit',
+        'kyc.view', 'kyc.delete',
       ],
     },
     {
@@ -63,6 +64,7 @@ async function main() {
         'returnable.manage', 'returnable.return_verify',
         'bookings.view', 'bookings.create',
         'events.view', 'events.edit',
+        'kyc.view', 'kyc.delete',
       ],
     },
     {
@@ -78,6 +80,7 @@ async function main() {
         'returnable.manage', 'returnable.return_verify',
         'bookings.view', 'bookings.create',
         'events.view',
+        'kyc.view', 'kyc.delete',
       ],
     },
     {
