@@ -37,6 +37,7 @@ export class EzeeReconciliationService implements OnApplicationBootstrap {
     'Checked In': 'CHECKED_IN',
     'Checked Out': 'CHECKED_OUT',
     'No Show': 'NO_SHOW',
+    'Dayuse Reservation': 'CONFIRMED', // day-use = no overnight stay, treat as confirmed
   };
 
   constructor(
@@ -60,6 +61,7 @@ export class EzeeReconciliationService implements OnApplicationBootstrap {
     try {
       await this.reconcileUnsyncedBookings();
       await this.reconcileEzeeState();
+      await this.ingestExternalBookings();
     } catch (err) {
       // Non-fatal — don't crash the app
       this.logger.error(`Reconciliation failed: ${(err as Error).message}`);
@@ -74,7 +76,7 @@ export class EzeeReconciliationService implements OnApplicationBootstrap {
         status: 'CONFIRMED',
         is_active: true,
         ezee_reservation_no: null,
-        ezee_reservation_id: { startsWith: 'VH-' },
+        ezee_reservation_id: { startsWith: 'TDS-' },
       },
       include: {
         payments: {
@@ -118,8 +120,6 @@ export class EzeeReconciliationService implements OnApplicationBootstrap {
   /**
    * Fetch all active bookings synced to eZee, then compare their status
    * against what eZee actually says. Fix any divergence.
-   *
-   * Groups bookings by property to batch eZee API calls per property.
    */
   private async reconcileEzeeState(): Promise<void> {
     // Only care about bookings that are synced (have ezee_reservation_no)
@@ -219,5 +219,113 @@ export class EzeeReconciliationService implements OnApplicationBootstrap {
     } else {
       this.logger.log('Reconciliation: all active bookings match eZee state');
     }
+  }
+
+  // ── 3. Ingest external bookings (OTAs, walk-ins, staff-made) ────────────
+
+  /**
+   * Pulls all eZee reservations arriving yesterday → 30 days from now,
+   * and creates ezee_booking_cache entries for any we don't already have.
+   *
+   * This covers bookings made via OTAs (MakeMyTrip, Agoda, Booking.com),
+   * walk-ins entered directly in eZee, or staff-created reservations.
+   *
+   * ERIs are generated as `EZEE-{CITY_CODE}-{reservationNo}`.
+   */
+  private async ingestExternalBookings(): Promise<void> {
+    const properties = await this.prisma.properties.findMany({
+      select: { id: true, city: true },
+    });
+
+    let ingested = 0;
+
+    for (const property of properties) {
+      try {
+        // Fetch eZee reservations: yesterday to 28 days out (eZee max window = 30 days)
+        const fromDate = this.offsetDate(-1);
+        const toDate = this.offsetDate(28);
+
+        const ezeeReservations = await this.ezee.fetchReservationsByDateRange(
+          property.id,
+          fromDate,
+          toDate,
+        );
+
+        if (ezeeReservations.length === 0) continue;
+
+        // Find which reservation numbers we already have cached
+        const ezeeResNos = ezeeReservations.map((r) => r.reservationNo);
+        const existing = await this.prisma.ezee_booking_cache.findMany({
+          where: { ezee_reservation_no: { in: ezeeResNos } },
+          select: { ezee_reservation_no: true },
+        });
+        const existingSet = new Set(existing.map((e) => e.ezee_reservation_no));
+
+        // Also check by generated ERI in case it was already ingested
+        const cityCode = (property.city || 'UNK').substring(0, 3).toUpperCase();
+        const generatedEris = ezeeResNos.map((no) => `EZEE-${cityCode}-${no}`);
+        const existingByEri = await this.prisma.ezee_booking_cache.findMany({
+          where: { ezee_reservation_id: { in: generatedEris } },
+          select: { ezee_reservation_id: true },
+        });
+        const existingEriSet = new Set(existingByEri.map((e) => e.ezee_reservation_id));
+
+        for (const res of ezeeReservations) {
+          // Skip if already cached (by eZee reservation_no or by generated ERI)
+          if (existingSet.has(res.reservationNo)) continue;
+          const eri = `EZEE-${cityCode}-${res.reservationNo}`;
+          if (existingEriSet.has(eri)) continue;
+
+          // Skip cancelled/no-show — no point caching dead bookings
+          const mappedStatus = EzeeReconciliationService.EZEE_STATUS_MAP[res.status];
+          if (mappedStatus === 'CANCELLED' || mappedStatus === 'NO_SHOW') continue;
+
+          await this.prisma.ezee_booking_cache.create({
+            data: {
+              ezee_reservation_id: eri,
+              property_id: property.id,
+              ezee_reservation_no: res.reservationNo,
+              room_type_name: res.roomTypeName,
+              room_number: res.roomName,
+              checkin_date: res.checkin ? new Date(res.checkin) : null,
+              checkout_date: res.checkout ? new Date(res.checkout) : null,
+              no_of_guests: res.noOfGuests,
+              booker_email: res.email,
+              booker_phone: res.phone,
+              source: res.source ?? 'External',
+              status: mappedStatus ?? 'CONFIRMED',
+              is_active: true,
+              fetched_at: new Date(),
+            },
+          });
+
+          this.logger.log(
+            `Ingested external booking: ${eri} (eZee#${res.reservationNo}, ${res.source ?? 'unknown'}, ${res.firstName} ${res.lastName})`,
+          );
+          ingested++;
+        }
+
+        // Brief pause between properties
+        if (properties.length > 1) {
+          await new Promise((r) => setTimeout(r, 500));
+        }
+      } catch (err) {
+        this.logger.error(
+          `Failed to ingest external bookings for ${property.id}: ${(err as Error).message}`,
+        );
+      }
+    }
+
+    if (ingested > 0) {
+      this.logger.warn(`Reconciliation: ingested ${ingested} external booking(s) from eZee`);
+    } else {
+      this.logger.log('Reconciliation: no new external bookings to ingest');
+    }
+  }
+
+  private offsetDate(days: number): string {
+    const d = new Date();
+    d.setDate(d.getDate() + days);
+    return d.toISOString().split('T')[0];
   }
 }

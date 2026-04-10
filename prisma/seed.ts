@@ -26,6 +26,21 @@ async function main() {
   });
   console.log('✅ Property seeded');
 
+  // ─── 1b. EZEE CONNECTION ────────────────────────────────────────────────────
+  await prisma.ezee_connection.upsert({
+    where: { id: 'ezee-conn-bandra-001' },
+    update: {},
+    create: {
+      id: 'ezee-conn-bandra-001',
+      property_id: propertyId,
+      hotel_code: process.env.HOTEL_CODE ?? '60765',
+      api_key: process.env.AUTH_CODE ?? '5119488337db81be25-26ab-11f1-9',
+      api_endpoint: 'https://live.ipms247.com/',
+      is_active: true,
+    },
+  });
+  console.log('✅ eZee connection seeded');
+
   // ─── 2. ADMIN ROLES ─────────────────────────────────────────────────────────
   const roles = [
     {

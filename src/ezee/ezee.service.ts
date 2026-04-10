@@ -4,6 +4,7 @@ import {
   EzeeApiError,
   EzeeBookingInput,
   EzeeInsertBookingResult,
+  EzeeReservationSummary,
   EzeeRoomAssignment,
   EzeeRoomAvailabilityResult,
   EzeeRoomInventoryResult,
@@ -363,17 +364,15 @@ export class EzeeService {
     propertyId: string,
     fromDate: string,
     toDate: string,
-  ): Promise<Array<{ reservationNo: string; status: string; roomName: string | null }>> {
+  ): Promise<EzeeReservationSummary[]> {
     const { hotelCode, authCode, baseUrl } = await this.getConnection(propertyId);
 
+    // eZee PMS uses "ArrivalList" request type with max 30-day window.
     const body = {
       RES_Request: {
-        Request_Type: 'FetchReservation',
+        Request_Type: 'ArrivalList',
         Authentication: { HotelCode: hotelCode, AuthCode: authCode },
-        ReservationData: {
-          ArrivalDateFrom: fromDate,
-          ArrivalDateTo: toDate,
-        },
+        Date: { from_date: fromDate, to_date: toDate },
       },
     };
 
@@ -385,21 +384,46 @@ export class EzeeService {
 
     const data = await resp.json();
 
-    if (data.Errors?.ErrorCode && data.Errors.ErrorCode !== '0') {
-      throw new EzeeApiError(data.Errors.ErrorCode, data.Errors.ErrorMessage, 'FetchReservation');
+    if (data.Errors?.ErrorCode && String(data.Errors.ErrorCode) !== '0') {
+      throw new EzeeApiError(data.Errors.ErrorCode, data.Errors.ErrorMessage, 'ArrivalList');
     }
 
     const reservations = data.Reservations?.Reservation ?? [];
-    const results: Array<{ reservationNo: string; status: string; roomName: string | null }> = [];
+    const results: EzeeReservationSummary[] = [];
+    // Multi-room bookings have one BookingTran per room — deduplicate by UniqueID,
+    // using the first tran for guest/status info and summing guest counts.
+    const seen = new Set<string>();
 
     for (const res of reservations) {
-      for (const tran of (res.BookingTran ?? [])) {
-        results.push({
-          reservationNo: String(res.UniqueID),
-          status: tran.CurrentStatus ?? '',
-          roomName: tran.RoomName ?? null,
-        });
-      }
+      const resNo = String(res.UniqueID);
+      if (seen.has(resNo)) continue;
+      seen.add(resNo);
+
+      const tran = res.BookingTran?.[0];
+      if (!tran) continue;
+
+      // Sum adults/children across all trans (multi-room bookings)
+      const totalGuests = (res.BookingTran ?? []).reduce(
+        (sum: number, t: any) => sum + Number(t.Adult ?? 1) + Number(t.Child ?? 0),
+        0,
+      );
+
+      results.push({
+        reservationNo: resNo,
+        status: tran.CurrentStatus ?? '',
+        roomName: tran.RoomName ?? null,
+        roomTypeId: tran.RoomTypeCode ?? null,
+        roomTypeName: tran.RoomTypeName ?? null,
+        checkin: tran.Start ?? null,
+        checkout: tran.End ?? null,
+        firstName: res.FirstName ?? tran.FirstName ?? null,
+        lastName: res.LastName ?? tran.LastName ?? null,
+        email: res.Email ?? tran.Email ?? null,
+        phone: res.Mobile ?? tran.Mobile ?? null,
+        source: tran.Source ?? null,
+        noOfGuests: totalGuests || 1,
+        totalAmountBeforeTax: Number(tran.TotalAmountBeforeTax ?? 0),
+      });
     }
 
     return results;

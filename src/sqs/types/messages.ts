@@ -105,6 +105,21 @@ export interface EzeeUpdateReservationPayload {
   updates: Record<string, unknown>;
 }
 
+export interface EzeeInsertColiveBookingPayload {
+  draft_booking_id: string;
+  property_id: string;
+  room_type_id: string;
+  guest_first_name: string;
+  guest_last_name: string;
+  guest_email: string;
+  guest_phone: string;
+  move_in_date: string;     // YYYY-MM-DD
+  move_out_date: string;    // YYYY-MM-DD
+  rate_per_night: number;
+  total_nights: number;
+  amount: number;
+}
+
 // ── Notification Messages ───────────────────────────────────────────────────
 
 export interface NotifyGuestPayload {

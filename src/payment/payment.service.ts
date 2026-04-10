@@ -860,4 +860,230 @@ export class PaymentService {
 
     return booking;
   }
+
+  // ─── COLIVE: CREATE RAZORPAY ORDER ─────────────────────────────────────────
+
+  /**
+   * Creates a Razorpay order for a long-stay (colive) booking.
+   * Operates on colive_draft_bookings, NOT ezee_booking_cache.
+   *
+   * POST /payment/create-colive-order
+   */
+  async createColiveOrder(
+    guest: GuestJwtPayload,
+    draftBookingId: string,
+    grandTotal: number,
+    currency = 'INR',
+  ) {
+    if (grandTotal <= 0) {
+      throw new BadRequestException('Grand total must be greater than zero');
+    }
+
+    const draft = await this.prisma.colive_draft_bookings.findUnique({
+      where: { id: draftBookingId },
+      include: { properties: true },
+    });
+
+    if (!draft) throw new NotFoundException('Colive draft booking not found');
+    if (draft.guest_id && draft.guest_id !== guest.guest_id) {
+      throw new BadRequestException('This draft booking does not belong to you');
+    }
+    if (draft.status === 'confirmed') {
+      throw new BadRequestException('This booking is already confirmed');
+    }
+
+    // Create Razorpay order
+    const rzpOrder = await (this.razorpay.orders.create({
+      amount: Math.round(grandTotal * 100),
+      currency: currency ?? 'INR',
+      receipt: draft.booking_reference,
+      notes: {
+        type: 'colive',
+        draft_booking_id: draftBookingId,
+        booking_reference: draft.booking_reference,
+        guest_id: guest.guest_id,
+      },
+    }) as any as Promise<{ id: string }>);
+
+    // Move draft to pending_payment
+    await this.prisma.colive_draft_bookings.update({
+      where: { id: draftBookingId },
+      data: {
+        status: 'pending_payment',
+        razorpay_order_id: rzpOrder.id,
+        guest_id: guest.guest_id,
+        updated_at: new Date(),
+      },
+    });
+
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'GUEST',
+      actor_id: guest.guest_id,
+      action: 'COLIVE_PAYMENT_CREATED',
+      entity_type: 'colive_draft_booking',
+      entity_id: draftBookingId,
+      new_value: {
+        razorpay_order_id: rzpOrder.id,
+        amount: grandTotal,
+        booking_reference: draft.booking_reference,
+      },
+    });
+
+    return {
+      payment_order_id: rzpOrder.id,
+      razorpay_order_id: rzpOrder.id,
+      razorpay_key: process.env.RAZORPAY_TEST_API_KEY,
+      amount: grandTotal,
+      amount_paise: Math.round(grandTotal * 100),
+      currency: currency ?? 'INR',
+      draft_booking_id: draftBookingId,
+      booking_reference: draft.booking_reference,
+      guest: {
+        name: `${draft.first_name} ${draft.last_name}`,
+        email: draft.email,
+        phone: draft.phone,
+      },
+    };
+  }
+
+  // ─── COLIVE: VERIFY PAYMENT ─────────────────────────────────────────────────
+
+  /**
+   * Verifies the Razorpay signature for a colive payment, confirms the draft
+   * booking, and fires the eZee SQS sync message.
+   *
+   * POST /payment/verify-colive
+   */
+  async verifyColivePayment(
+    guest: GuestJwtPayload,
+    draftBookingId: string,
+    razorpay_order_id: string,
+    razorpay_payment_id: string,
+    razorpay_signature: string,
+  ) {
+    // Verify Razorpay signature
+    const expectedSig = createHmac('sha256', process.env.RAZORPAY_TEST_API_SECRET!)
+      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+      .digest('hex');
+
+    if (expectedSig !== razorpay_signature) {
+      this.logger.warn(`Invalid colive payment signature for order ${razorpay_order_id}`);
+      throw new BadRequestException('Invalid payment signature');
+    }
+
+    const draft = await this.prisma.colive_draft_bookings.findUnique({
+      where: { id: draftBookingId },
+      include: { properties: true },
+    });
+
+    if (!draft) throw new NotFoundException('Colive draft booking not found');
+    if (draft.razorpay_order_id !== razorpay_order_id) {
+      throw new BadRequestException('Razorpay order ID mismatch');
+    }
+    if (draft.status === 'confirmed') {
+      return {
+        message: 'Payment already captured',
+        booking_id: draft.id,
+        booking_reference: draft.booking_reference,
+        status: 'confirmed',
+        payment_id: draft.payment_id ?? '',
+        total_paid: Number(draft.grand_total),
+        currency: 'INR',
+      };
+    }
+
+    // Look up the room type for eZee IDs
+    const roomType = await this.prisma.room_types.findUnique({
+      where: { id: draft.room_type_id },
+    });
+
+    // Look up the quote for eZee rate_per_night
+    const quote = await this.prisma.colive_quotes.findUnique({
+      where: { id: draft.quote_id },
+    });
+
+    const ratePerNight = quote?.ezee_rate_per_night
+      ? Number(quote.ezee_rate_per_night)
+      : Number(roomType?.base_price_per_night ?? 0);
+
+    const moveIn = new Date(draft.move_in_date);
+    const moveOut = draft.estimated_checkout ?? this.addColiveMonths(moveIn, draft.duration_months);
+    const totalNights = Math.max(1, Math.ceil(
+      (moveOut.getTime() - moveIn.getTime()) / (1000 * 60 * 60 * 24),
+    ));
+
+    // Confirm the draft booking
+    const paymentRecordId = uuidv4();
+    await this.prisma.colive_draft_bookings.update({
+      where: { id: draftBookingId },
+      data: {
+        status: 'confirmed',
+        payment_id: paymentRecordId,
+        ezee_sync_status: 'PENDING',
+        updated_at: new Date(),
+        onboarding_json: {
+          whatsapp_url: 'https://wa.me/919999999999',
+          events_url: 'https://vibehouse.in/events',
+          community_name: 'The Daily Social Community',
+          next_steps: [
+            'Complete your KYC before move-in',
+            'Join The Daily Social WhatsApp community',
+            'Download The Daily Social app for room access and services',
+          ],
+        },
+      },
+    });
+
+    // SQS: queue eZee booking sync for this colive stay
+    await this.sqsProducer.sendEzeeInsertColiveBooking({
+      draft_booking_id: draftBookingId,
+      property_id: draft.property_id,
+      room_type_id: draft.room_type_id,
+      guest_first_name: draft.first_name,
+      guest_last_name: draft.last_name,
+      guest_email: draft.email,
+      guest_phone: draft.phone,
+      move_in_date: this.formatColiveDate(moveIn),
+      move_out_date: this.formatColiveDate(moveOut),
+      rate_per_night: ratePerNight,
+      total_nights: totalNights,
+      amount: Number(draft.grand_total),
+    });
+
+    // SQS: audit log
+    await this.sqsProducer.sendAuditLog({
+      actor_type: 'GUEST',
+      actor_id: guest.guest_id,
+      action: 'COLIVE_BOOKING_CONFIRMED',
+      entity_type: 'colive_draft_booking',
+      entity_id: draftBookingId,
+      new_value: {
+        booking_reference: draft.booking_reference,
+        razorpay_order_id,
+        razorpay_payment_id,
+        amount: Number(draft.grand_total),
+      },
+    });
+
+    return {
+      message: 'Colive booking confirmed',
+      booking_id: draftBookingId,
+      booking_reference: draft.booking_reference,
+      status: 'confirmed',
+      payment_id: paymentRecordId,
+      total_paid: Number(draft.grand_total),
+      currency: 'INR',
+    };
+  }
+
+  private addColiveMonths(date: Date, months: number): Date {
+    const d = new Date(date);
+    d.setMonth(d.getMonth() + months);
+    return d;
+  }
+
+  private formatColiveDate(date: Date): string {
+    return date.toISOString().split('T')[0];
+  }
 }
+

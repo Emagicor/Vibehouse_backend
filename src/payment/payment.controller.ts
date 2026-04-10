@@ -122,4 +122,49 @@ export class PaymentController {
   devSimulateFail(@Body('razorpay_order_id') razorpayOrderId: string) {
     return this.paymentService.devSimulateFail(razorpayOrderId);
   }
+
+  // ─── COLIVE ENDPOINTS ────────────────────────────────────────────────────────
+
+  /**
+   * POST /payment/create-colive-order
+   * Creates a Razorpay order for a long-stay (colive) draft booking.
+   */
+  @UseGuards(GuestJwtGuard)
+  @Post('payment/create-colive-order')
+  createColiveOrder(
+    @CurrentGuest() guest: GuestJwtPayload,
+    @Body() dto: { draft_booking_id: string; grand_total: number; currency?: string },
+  ) {
+    return this.paymentService.createColiveOrder(
+      guest,
+      dto.draft_booking_id,
+      dto.grand_total,
+      dto.currency ?? 'INR',
+    );
+  }
+
+  /**
+   * POST /payment/verify-colive
+   * Verifies payment signature and confirms the colive booking.
+   * Fires eZee SQS sync job.
+   */
+  @UseGuards(GuestJwtGuard)
+  @Post('payment/verify-colive')
+  verifyColivePayment(
+    @CurrentGuest() guest: GuestJwtPayload,
+    @Body() dto: {
+      draft_booking_id: string;
+      razorpay_order_id: string;
+      razorpay_payment_id: string;
+      razorpay_signature: string;
+    },
+  ) {
+    return this.paymentService.verifyColivePayment(
+      guest,
+      dto.draft_booking_id,
+      dto.razorpay_order_id,
+      dto.razorpay_payment_id,
+      dto.razorpay_signature,
+    );
+  }
 }

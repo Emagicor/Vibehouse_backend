@@ -13,6 +13,7 @@ import { AdminBookingsModule } from './admin/bookings/admin-bookings.module';
 import { GuestStoreModule } from './guest/store/guest-store.module';
 import { GuestBookingModule } from './guest/booking/guest-booking.module';
 import { GuestKycModule } from './guest/kyc/guest-kyc.module';
+import { ColiveModule } from './guest/colive/colive.module';
 import { PaymentModule } from './payment/payment.module';
 import { AdminEventsModule } from './admin/events/admin-events.module';
 import { PublicModule } from './public/public.module';
@@ -36,6 +37,7 @@ import { EzeeModule } from './ezee/ezee.module';
     GuestStoreModule,
     GuestBookingModule,
     GuestKycModule,
+    ColiveModule,
     PaymentModule,
     PublicModule,
     SqsModule,
@@ -43,4 +45,5 @@ import { EzeeModule } from './ezee/ezee.module';
   ],
 })
 export class AppModule {}
+
 

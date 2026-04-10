@@ -266,25 +266,25 @@ model ezee_sync_log {
 }
 
 model guests {
-  id                                                                     String                 @id @db.VarChar(36)
-  name                                                                   String                 @db.VarChar(255)
-  email                                                                  String?                @unique @db.VarChar(255)
-  phone                                                                  String?                @unique @db.VarChar(20)
-  password_hash                                                          String?                @db.VarChar(255)
-  email_verified                                                         Boolean                @default(false)
-  phone_verified                                                         Boolean                @default(false)
-  profile_photo_url                                                      String?                @db.VarChar(500)
-  created_at                                                             DateTime               @default(now()) @db.Timestamp(6)
+  id                                                                     String                  @id @db.VarChar(36)
+  name                                                                   String                  @db.VarChar(255)
+  email                                                                  String?                 @unique @db.VarChar(255)
+  phone                                                                  String?                 @unique @db.VarChar(20)
+  password_hash                                                          String?                 @db.VarChar(255)
+  email_verified                                                         Boolean                 @default(false)
+  phone_verified                                                         Boolean                 @default(false)
+  profile_photo_url                                                      String?                 @db.VarChar(500)
+  created_at                                                             DateTime                @default(now()) @db.Timestamp(6)
   addon_orders                                                           addon_orders[]
   auth_providers                                                         auth_providers[]
-  booking_guest_access_booking_guest_access_approved_by_guest_idToguests booking_guest_access[] @relation("booking_guest_access_approved_by_guest_idToguests")
-  booking_guest_access_booking_guest_access_guest_idToguests             booking_guest_access[] @relation("booking_guest_access_guest_idToguests")
+  booking_guest_access_booking_guest_access_approved_by_guest_idToguests booking_guest_access[]  @relation("booking_guest_access_approved_by_guest_idToguests")
+  booking_guest_access_booking_guest_access_guest_idToguests             booking_guest_access[]  @relation("booking_guest_access_guest_idToguests")
   booking_slots                                                          booking_slots[]
   borrowable_checkouts                                                   borrowable_checkouts[]
   checkin_records                                                        checkin_records[]
   ezee_booking_cache                                                     ezee_booking_cache[]
-  kyc_submissions_kyc_submissions_guest_idToguests                       kyc_submissions[]      @relation("kyc_submissions_guest_idToguests")
-  kyc_submissions_kyc_submissions_submitted_by_guest_idToguests          kyc_submissions[]      @relation("kyc_submissions_submitted_by_guest_idToguests")
+  kyc_submissions_kyc_submissions_guest_idToguests                       kyc_submissions[]       @relation("kyc_submissions_guest_idToguests")
+  kyc_submissions_kyc_submissions_submitted_by_guest_idToguests          kyc_submissions[]       @relation("kyc_submissions_submitted_by_guest_idToguests")
   notification_log                                                       notification_log[]
   otp_logs                                                               otp_logs[]
   payments                                                               payments[]
@@ -292,6 +292,8 @@ model guests {
   smart_lock_access                                                      smart_lock_access[]
   stay_extensions                                                        stay_extensions[]
   zoho_ticket_ref                                                        zoho_ticket_ref[]
+  colive_quotes                                                          colive_quotes[]
+  colive_draft_bookings                                                  colive_draft_bookings[]
 }
 
 model inventory {
@@ -444,22 +446,215 @@ model product_catalog {
 }
 
 model properties {
-  id                 String               @id @db.VarChar(36)
-  name               String               @db.VarChar(255)
-  address            String
-  city               String               @db.VarChar(100)
-  branding_config    Json?
-  created_at         DateTime             @default(now()) @db.Timestamp(6)
-  admin_users        admin_users[]
-  events             events[]
-  ezee_booking_cache ezee_booking_cache[]
-  ezee_connection    ezee_connection[]
-  inventory          inventory[]
-  mygate_connection  mygate_connection[]
-  mygate_devices     mygate_devices[]
-  product_catalog    product_catalog[]
-  room_types         room_types[]
-  sla_config         sla_config[]
+  id                       String                    @id @db.VarChar(36)
+  name                     String                    @db.VarChar(255)
+  address                  String
+  city                     String                    @db.VarChar(100)
+  branding_config          Json?
+  created_at               DateTime                  @default(now()) @db.Timestamp(6)
+  admin_users              admin_users[]
+  events                   events[]
+  ezee_booking_cache       ezee_booking_cache[]
+  ezee_connection          ezee_connection[]
+  inventory                inventory[]
+  mygate_connection        mygate_connection[]
+  mygate_devices           mygate_devices[]
+  product_catalog          product_catalog[]
+  room_types               room_types[]
+  sla_config               sla_config[]
+  colive_property_content  colive_property_content[]
+  colive_room_options      colive_room_options[]
+  colive_addons            colive_addons[]
+  colive_quotes            colive_quotes[]
+  colive_draft_bookings    colive_draft_bookings[]
+}
+
+// ─── COLIVE LONG-STAY TABLES ─────────────────────────────────────────────────
+
+model colive_locations {
+  id                      String                    @id @db.VarChar(36)
+  slug                    String                    @unique @db.VarChar(50)
+  label                   String                    @db.VarChar(100)
+  is_active               Boolean                   @default(true)
+  created_at              DateTime                  @default(now()) @db.Timestamp(6)
+  colive_property_content colive_property_content[]
+}
+
+model colive_plans {
+  id                    String   @id @db.VarChar(36)
+  slug                  String   @unique @db.VarChar(50)
+  title                 String   @db.VarChar(100)
+  description           String?
+  recommended_stay_type String   @db.VarChar(20)
+  accent_hex            String?  @db.VarChar(10)
+  badge_copy            String?  @db.VarChar(50)
+  sort_order            Int      @default(0)
+  is_active             Boolean  @default(true)
+  created_at            DateTime @default(now()) @db.Timestamp(6)
+}
+
+model colive_property_content {
+  id                    String           @id @db.VarChar(36)
+  property_id           String           @db.VarChar(36)
+  location_id           String           @db.VarChar(36)
+  slug                  String           @unique @db.VarChar(100)
+  headline              String?          @db.VarChar(200)
+  subheadline           String?          @db.VarChar(300)
+  description           String?
+  microcopy             String?          @db.VarChar(300)
+  hero_image_url        String?          @db.VarChar(500)
+  secondary_image_url   String?          @db.VarChar(500)
+  supporting_image_urls Json?            @default("[]")
+  gallery_count         Int?
+  primary_tag           String?          @db.VarChar(50)
+  secondary_tag         String?          @db.VarChar(50)
+  rating                Decimal?         @db.Decimal(2, 1)
+  rating_label          String?          @db.VarChar(50)
+  amenities             Json?            @default("[]")
+  benefits              Json?            @default("[]")
+  stories               Json?            @default("[]")
+  checkout_notes        Json?            @default("[]")
+  recommended_for       Json?            @default("[]")
+  is_active             Boolean          @default(true)
+  created_at            DateTime         @default(now()) @db.Timestamp(6)
+  updated_at            DateTime         @default(now()) @db.Timestamp(6)
+  properties            properties       @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  colive_locations      colive_locations @relation(fields: [location_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([property_id], map: "idx_colive_content_property")
+  @@index([location_id], map: "idx_colive_content_location")
+}
+
+model colive_room_options {
+  id                   String                  @id @db.VarChar(36)
+  property_id          String                  @db.VarChar(36)
+  room_type_id         String                  @db.VarChar(36)
+  slug                 String                  @db.VarChar(50)
+  name                 String                  @db.VarChar(100)
+  description          String?
+  feature_points       Json?                   @default("[]")
+  max_guests           Int?                    @default(1)
+  recommended_for      Json?                   @default("[]")
+  thumbnail_url        String?                 @db.VarChar(500)
+  sort_order           Int                     @default(0)
+  is_active            Boolean                 @default(true)
+  created_at           DateTime                @default(now()) @db.Timestamp(6)
+  properties           properties              @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  room_types           room_types              @relation(fields: [room_type_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([property_id, slug])
+  @@index([property_id, is_active], map: "idx_colive_rooms_property")
+}
+
+model colive_addons {
+  id                   String     @id @db.VarChar(36)
+  property_id          String     @db.VarChar(36)
+  slug                 String     @db.VarChar(50)
+  name                 String     @db.VarChar(100)
+  description          String?
+  pricing_model        String     @db.VarChar(20)
+  unit_price           Decimal    @db.Decimal(10, 2)
+  currency             String     @default("INR") @db.VarChar(5)
+  max_quantity         Int?
+  default_quantity     Int?       @default(0)
+  category             String?    @db.VarChar(30)
+  icon_hint            String?    @db.VarChar(50)
+  is_available         Boolean    @default(true)
+  availability_message String?    @db.VarChar(200)
+  sort_order           Int        @default(0)
+  is_active            Boolean    @default(true)
+  created_at           DateTime   @default(now()) @db.Timestamp(6)
+  properties           properties @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([property_id, slug])
+  @@index([property_id, is_active], map: "idx_colive_addons_property")
+}
+
+model colive_search_sessions {
+  id              String   @id @db.VarChar(36)
+  location_id     String?  @db.VarChar(36)
+  location_slug   String?  @db.VarChar(50)
+  move_in_date    String?  @db.VarChar(10)
+  duration_months Int?
+  stay_type       String?  @db.VarChar(20)
+  guest_count     Int?
+  plan_id         String?  @db.VarChar(36)
+  currency        String?  @default("INR") @db.VarChar(5)
+  result_count    Int?
+  created_at      DateTime @default(now()) @db.Timestamp(6)
+
+  @@index([location_slug, created_at], map: "idx_colive_search_location")
+}
+
+model colive_quotes {
+  id                  String     @id @db.VarChar(36)
+  property_id         String     @db.VarChar(36)
+  guest_id            String?    @db.VarChar(36)
+  room_option_id      String     @db.VarChar(36)
+  move_in_date        DateTime   @db.Date
+  duration_months     Int
+  stay_type           String     @db.VarChar(20)
+  room_line_total     Decimal    @db.Decimal(10, 2)
+  addons_json         Json?      @default("[]")
+  included_items_json Json?      @default("[]")
+  room_subtotal       Decimal    @db.Decimal(10, 2)
+  addon_subtotal      Decimal    @db.Decimal(10, 2)
+  discount_total      Decimal    @default(0) @db.Decimal(10, 2)
+  deposit_total       Decimal    @default(0) @db.Decimal(10, 2)
+  tax_total           Decimal    @db.Decimal(10, 2)
+  grand_total         Decimal    @db.Decimal(10, 2)
+  monthly_savings     Decimal?   @db.Decimal(10, 2)
+  total_savings       Decimal?   @db.Decimal(10, 2)
+  pricing_notes_json  Json?      @default("[]")
+  coupon_code         String?    @db.VarChar(30)
+  currency            String     @default("INR") @db.VarChar(5)
+  ezee_rate_per_night Decimal?   @db.Decimal(10, 2)
+  expires_at          DateTime   @db.Timestamp(6)
+  created_at          DateTime   @default(now()) @db.Timestamp(6)
+  properties          properties @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  guests              guests?    @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([guest_id], map: "idx_colive_quotes_guest")
+  @@index([expires_at], map: "idx_colive_quotes_expiry")
+}
+
+model colive_draft_bookings {
+  id                  String     @id @db.VarChar(36)
+  booking_reference   String     @unique @db.VarChar(30)
+  quote_id            String     @db.VarChar(36)
+  property_id         String     @db.VarChar(36)
+  guest_id            String?    @db.VarChar(36)
+  room_option_id      String     @db.VarChar(36)
+  room_type_id        String     @db.VarChar(36)
+  move_in_date        DateTime   @db.Date
+  duration_months     Int
+  stay_type           String     @db.VarChar(20)
+  estimated_checkout  DateTime?  @db.Date
+  first_name          String     @db.VarChar(100)
+  last_name           String     @db.VarChar(100)
+  email               String     @db.VarChar(255)
+  phone               String     @db.VarChar(20)
+  addons_json         Json?      @default("[]")
+  room_subtotal       Decimal    @db.Decimal(10, 2)
+  addon_subtotal      Decimal    @db.Decimal(10, 2)
+  tax_total           Decimal    @db.Decimal(10, 2)
+  grand_total         Decimal    @db.Decimal(10, 2)
+  source              String     @default("web_colive_flow") @db.VarChar(30)
+  notes               String?
+  status              String     @default("draft") @db.VarChar(30)
+  payment_id          String?    @db.VarChar(36)
+  razorpay_order_id   String?    @db.VarChar(100)
+  ezee_reservation_no String?    @db.VarChar(100)
+  ezee_sync_status    String     @default("NOT_SYNCED") @db.VarChar(20)
+  onboarding_json     Json?      @default("{}")
+  created_at          DateTime   @default(now()) @db.Timestamp(6)
+  updated_at          DateTime   @default(now()) @db.Timestamp(6)
+  properties          properties @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  guests              guests?    @relation(fields: [guest_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([guest_id], map: "idx_colive_draft_guest")
+  @@index([status], map: "idx_colive_draft_status")
+  @@index([booking_reference], map: "idx_colive_draft_ref")
 }
 
 model returnable_checkouts {
@@ -490,24 +685,25 @@ model returnable_checkouts {
 }
 
 model room_types {
-  id                   String     @id @db.VarChar(36)
-  property_id          String     @db.VarChar(36)
-  name                 String     @db.VarChar(100)
-  slug                 String     @db.VarChar(50)
-  type                 String     @db.VarChar(20)
+  id                   String                @id @db.VarChar(36)
+  property_id          String                @db.VarChar(36)
+  name                 String                @db.VarChar(100)
+  slug                 String                @db.VarChar(50)
+  type                 String                @db.VarChar(20)
   total_rooms          Int
-  beds_per_room        Int        @default(1)
+  beds_per_room        Int                   @default(1)
   total_beds           Int
-  base_price_per_night Decimal    @db.Decimal(10, 2)
-  floor_range          String?    @db.VarChar(20)
-  amenities            Json?      @default("[]")
-  is_active            Boolean?   @default(true)
-  created_at           DateTime?  @default(now()) @db.Timestamp(6)
-  updated_at           DateTime?  @default(now()) @db.Timestamp(6)
-  ezee_room_type_id    String?    @db.VarChar(50)
-  ezee_rate_plan_id    String?    @db.VarChar(50)
-  ezee_rate_type_id    String?    @db.VarChar(50)
-  properties           properties @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  base_price_per_night Decimal               @db.Decimal(10, 2)
+  floor_range          String?               @db.VarChar(20)
+  amenities            Json?                 @default("[]")
+  is_active            Boolean?              @default(true)
+  created_at           DateTime?             @default(now()) @db.Timestamp(6)
+  updated_at           DateTime?             @default(now()) @db.Timestamp(6)
+  ezee_room_type_id    String?               @db.VarChar(50)
+  ezee_rate_plan_id    String?               @db.VarChar(50)
+  ezee_rate_type_id    String?               @db.VarChar(50)
+  properties           properties            @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  colive_room_options  colive_room_options[]
 
   @@unique([property_id, slug])
   @@index([property_id, is_active], map: "idx_room_types_property")

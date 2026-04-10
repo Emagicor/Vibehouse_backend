@@ -48,7 +48,7 @@ export class PublicEventsController {
     @Query('filter') filter?: string,
   ) {
     return this.eventsService.listPublicEvents(
-      propertyId || 'prop-bandra-001',
+      propertyId || 'prop-koramangala-a',
       filter,
     );
   }

@@ -7,6 +7,7 @@ import type {
   EzeeInsertBookingPayload,
   EzeeAddExtraChargePayload,
   EzeeUpdateReservationPayload,
+  EzeeInsertColiveBookingPayload,
 } from '../types/messages';
 import { EzeeService } from '../../ezee/ezee.service';
 import { EzeeApiError } from '../../ezee/ezee.types';
@@ -34,6 +35,10 @@ export class EzeeSyncWorker implements SqsWorker {
     switch (message.type) {
       case EzeeSyncMessageType.INSERT_BOOKING:
         await this.handleInsertBooking(message.payload as EzeeInsertBookingPayload);
+        break;
+
+      case EzeeSyncMessageType.INSERT_COLIVE_BOOKING:
+        await this.handleInsertColiveBooking(message.payload as EzeeInsertColiveBookingPayload);
         break;
 
       case EzeeSyncMessageType.ADD_EXTRA_CHARGE:
@@ -286,6 +291,130 @@ export class EzeeSyncWorker implements SqsWorker {
   private async handleUpdateReservation(payload: EzeeUpdateReservationPayload): Promise<void> {
     this.logger.log(`[STUB] eZee UpdateReservation: ERI ${payload.eri}`);
     // Phase 2: stay extensions, cancellations, date changes
+  }
+
+  // ── INSERT COLIVE BOOKING ─────────────────────────────────────────────────
+
+  /**
+   * Syncs a confirmed colive (long-stay) booking to eZee PMS.
+   * Same pipeline as nightly bookings:
+   *   InsertBooking → ProcessBooking → (FetchSingleBooking) → AddPayment
+   *
+   * On success: updates colive_draft_bookings.ezee_reservation_no + ezee_sync_status
+   */
+  private async handleInsertColiveBooking(payload: EzeeInsertColiveBookingPayload): Promise<void> {
+    const {
+      draft_booking_id, property_id, room_type_id,
+      guest_first_name, guest_last_name, guest_email, guest_phone,
+      move_in_date, move_out_date, rate_per_night, total_nights, amount,
+    } = payload;
+
+    const draft = await this.prisma.colive_draft_bookings.findUnique({
+      where: { id: draft_booking_id },
+    });
+    if (!draft) {
+      this.logger.error(`Colive draft booking ${draft_booking_id} not found — skipping`);
+      return;
+    }
+
+    // Idempotency check — skip if already synced
+    if (draft.ezee_reservation_no) {
+      this.logger.log(`Colive booking ${draft_booking_id} already synced (${draft.ezee_reservation_no})`);
+      return;
+    }
+
+    // Fetch room type for eZee IDs
+    const roomType = await this.prisma.room_types.findUnique({ where: { id: room_type_id } });
+    if (!roomType?.ezee_room_type_id) {
+      this.logger.error(`Room type ${room_type_id} has no eZee ID — cannot sync colive booking`);
+      return;
+    }
+
+    const syncLogId = await this.createSyncLog('colive_draft_booking', draft_booking_id, 'INSERT_COLIVE_BOOKING');
+
+    try {
+      // ── Step 1: InsertBooking ─────────────────────────────────────────────
+      const title = 'Mr';
+      const rateStr = Array(total_nights).fill(String(Math.round(rate_per_night))).join(',');
+      const zeroStr = Array(total_nights).fill('0').join(',');
+
+      this.logger.log(`eZee InsertBooking (colive): ${draft_booking_id}, ${total_nights} nights, ${move_in_date} → ${move_out_date}`);
+
+      const result = await this.ezee.insertBooking(property_id, {
+        checkin: move_in_date,
+        checkout: move_out_date,
+        email: guest_email,
+        phone: guest_phone,
+        rooms: [{
+          ezeeRoomTypeId: roomType.ezee_room_type_id,
+          ezeeRatePlanId: roomType.ezee_rate_plan_id ?? '',
+          ezeeRateTypeId: roomType.ezee_rate_type_id ?? roomType.ezee_rate_plan_id ?? '',
+          adults: 1,
+          children: 0,
+          ratePerNight: rate_per_night,
+          numberOfNights: total_nights,
+          guestTitle: title,
+          guestFirstName: guest_first_name,
+          guestLastName: guest_last_name,
+          guestGender: 'Male',
+        }],
+      });
+
+      const reservationNo = result.reservationNo;
+      const subReservationNos = result.subReservationNos;
+
+      // Persist eZee reservation number to draft
+      await this.prisma.colive_draft_bookings.update({
+        where: { id: draft_booking_id },
+        data: {
+          ezee_reservation_no: reservationNo,
+          ezee_sync_status: 'PARTIAL',
+          updated_at: new Date(),
+        },
+      });
+      await this.delay();
+
+      // ── Step 2: ProcessBooking ────────────────────────────────────────────
+      this.logger.log(`eZee ProcessBooking (colive): confirming ${reservationNo}`);
+      await this.ezee.processBooking(property_id, reservationNo);
+      await this.delay();
+
+      // ── Step 3: AddPayment ────────────────────────────────────────────────
+      const paymentTargets = subReservationNos.length > 0 ? subReservationNos : [reservationNo];
+      const amountPerBed = Math.floor(amount / paymentTargets.length);
+
+      for (let i = 0; i < paymentTargets.length; i++) {
+        const bedAmount = i === paymentTargets.length - 1
+          ? amount - amountPerBed * i
+          : amountPerBed;
+
+        this.logger.log(`eZee AddPayment (colive): ${paymentTargets[i]}, ₹${bedAmount}`);
+        try {
+          await this.ezee.addPayment(property_id, paymentTargets[i], bedAmount);
+          if (i < paymentTargets.length - 1) await this.delay(1000);
+        } catch (err) {
+          this.logger.warn(`eZee AddPayment (colive) failed for ${paymentTargets[i]}: ${(err as Error).message}`);
+        }
+      }
+
+      // ── Done ──────────────────────────────────────────────────────────────
+      await this.prisma.colive_draft_bookings.update({
+        where: { id: draft_booking_id },
+        data: { ezee_sync_status: 'SYNCED', updated_at: new Date() },
+      });
+
+      await this.updateSyncLog(syncLogId, 'SUCCESS');
+      this.logger.log(`eZee colive sync complete: draftId=${draft_booking_id}, eZee=${reservationNo}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`eZee colive sync failed for ${draft_booking_id}: ${message}`);
+      await this.updateSyncLog(syncLogId, 'FAILED', message);
+      await this.prisma.colive_draft_bookings.update({
+        where: { id: draft_booking_id },
+        data: { ezee_sync_status: 'FAILED', updated_at: new Date() },
+      });
+      throw err; // Let SQS retry
+    }
   }
 
   // ── Room picking helpers ─────────────────────────────────────────────────

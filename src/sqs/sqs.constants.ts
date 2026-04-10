@@ -33,6 +33,7 @@ export enum OpsMessageType {
 
 export enum EzeeSyncMessageType {
   INSERT_BOOKING = 'insert_booking',
+  INSERT_COLIVE_BOOKING = 'insert_colive_booking',
   ADD_EXTRA_CHARGE = 'add_extra_charge',
   UPDATE_RESERVATION = 'update_reservation',
   MARK_CHECKED_IN = 'mark_checked_in',

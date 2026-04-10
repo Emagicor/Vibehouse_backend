@@ -19,6 +19,7 @@ import type {
   LowStockAlertPayload,
   EzeeInsertBookingPayload,
   EzeeAddExtraChargePayload,
+  EzeeInsertColiveBookingPayload,
   NotifyGuestPayload,
   NotifyStaffPayload,
   SlaEscalatePayload,
@@ -205,6 +206,19 @@ export class SqsProducerService {
       EzeeSyncMessageType.ADD_EXTRA_CHARGE,
       payload,
       payload.eri,
+    );
+  }
+
+  /**
+   * Queue an eZee InsertBooking for a colive (long-stay) booking.
+   * Uses the same FIFO ezee-sync queue, keyed by draft_booking_id.
+   */
+  async sendEzeeInsertColiveBooking(payload: EzeeInsertColiveBookingPayload): Promise<void> {
+    await this.sendFifo(
+      SQS_QUEUE_URLS.EZEE_SYNC,
+      EzeeSyncMessageType.INSERT_COLIVE_BOOKING,
+      payload,
+      payload.draft_booking_id,
     );
   }
 

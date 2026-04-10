@@ -265,7 +265,7 @@ export class GuestBookingService {
           checkin_date: checkin,
           checkout_date: checkout,
           no_of_guests: totalGuests,
-          source: 'VibeHouse',
+          source: 'The Daily Social',
           status: 'PENDING_PAYMENT',
           is_active: true,
           fetched_at: new Date(),
@@ -433,7 +433,7 @@ export class GuestBookingService {
     const random = uuidv4().slice(0, 4).toUpperCase();
     // Derive short code from city name: "Kormangala" → "KORMANGALA", "Bandra" → "BANDRA"
     const code = propertyCity.toUpperCase().replace(/\s+/g, '').slice(0, 10);
-    return `VH-${code}-${timestamp}-${random}`;
+    return `TDS-${code}-${timestamp}-${random}`;
   }
 
   // ─── Booking lookup ───────────────────────────────────────────────────────

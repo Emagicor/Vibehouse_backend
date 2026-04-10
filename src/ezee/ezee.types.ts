@@ -78,6 +78,25 @@ export interface EzeeRoomAssignment {
   roomId: string;
 }
 
+// ── Fetch Reservations (reconciliation) ───────────────────────────────────
+
+export interface EzeeReservationSummary {
+  reservationNo: string;
+  status: string;
+  roomName: string | null;
+  roomTypeId: string | null;
+  roomTypeName: string | null;
+  checkin: string | null;
+  checkout: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  phone: string | null;
+  source: string | null;
+  noOfGuests: number;
+  totalAmountBeforeTax: number;
+}
+
 // ── Error ──────────────────────────────────────────────────────────────────
 
 export class EzeeApiError extends Error {

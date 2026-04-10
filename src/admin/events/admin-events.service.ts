@@ -14,7 +14,7 @@ export class AdminEventsService {
   ) {}
 
   async createEvent(dto: CreateEventDto, actor: AdminJwtPayload) {
-    const propertyId = actor.property_id ?? 'prop-bandra-001';
+    const propertyId = actor.property_id ?? 'prop-koramangala-a';
     const id = `evt-${uuidv4().slice(0, 8)}`;
 
     const event = await this.prisma.events.create({
@@ -103,7 +103,7 @@ export class AdminEventsService {
   }
 
   async uploadPoster(file: Express.Multer.File, actor: AdminJwtPayload) {
-    const propertyId = actor.property_id ?? 'prop-bandra-001';
+    const propertyId = actor.property_id ?? 'prop-koramangala-a';
     return this.s3.uploadFile(
       `events/${propertyId}`,
       file.originalname,

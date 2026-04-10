@@ -70,6 +70,9 @@ export class GuestAuthService {
 
     const token = this.issueToken(guest);
 
+    // Auto-link any eZee bookings matching this guest's email/phone
+    this.autoLinkBookings(guest);
+
     return {
       access_token: token,
       guest: this.formatGuest(guest),
@@ -91,6 +94,9 @@ export class GuestAuthService {
     }
 
     const token = this.issueToken(guest);
+
+    // Auto-link any eZee bookings matching this guest's email/phone
+    this.autoLinkBookings(guest);
 
     return {
       access_token: token,
@@ -364,6 +370,7 @@ export class GuestAuthService {
       // Returning Google user — just issue token
       const guest = existingProvider.guests;
       this.logger.log(`[GoogleOAuth] Returning user found: guest_id=${guest.id}`);
+      this.autoLinkBookings(guest);
       return {
         access_token: this.issueToken(guest),
         guest: this.formatGuest(guest),
@@ -402,6 +409,7 @@ export class GuestAuthService {
         this.logger.log(`[GoogleOAuth] Email marked as verified`);
       }
 
+      this.autoLinkBookings(guest);
       return {
         access_token: this.issueToken(guest),
         guest: this.formatGuest(guest),
@@ -435,6 +443,7 @@ export class GuestAuthService {
     });
     this.logger.log(`[GoogleOAuth] Provider created. OAuth flow complete.`);
 
+    this.autoLinkBookings(newGuest);
     return {
       access_token: this.issueToken(newGuest),
       guest: this.formatGuest(newGuest),
@@ -455,6 +464,78 @@ export class GuestAuthService {
       phone_verified: guest.phone_verified,
     };
     return this.jwt.sign(payload);
+  }
+
+  // ─── AUTO-LINK: match unlinked bookings by email/phone on login/signup ──
+
+  /**
+   * After a guest authenticates, check if any ezee_booking_cache entries
+   * match their email or phone but have no booking_guest_access yet.
+   * If found, auto-create the link so the booking appears in "My Bookings"
+   * immediately — no manual linking required.
+   *
+   * Non-fatal: failures are logged but never block auth.
+   */
+  private async autoLinkBookings(guest: {
+    id: string;
+    email: string | null;
+    phone: string | null;
+  }): Promise<void> {
+    try {
+      if (!guest.email && !guest.phone) return;
+
+      const conditions: any[] = [];
+      if (guest.email) conditions.push({ booker_email: guest.email });
+      if (guest.phone) conditions.push({ booker_phone: guest.phone });
+
+      const matchingBookings = await this.prisma.ezee_booking_cache.findMany({
+        where: {
+          OR: conditions,
+          is_active: true,
+        },
+        select: { ezee_reservation_id: true, booker_email: true, booker_phone: true, no_of_guests: true },
+      });
+
+      if (matchingBookings.length === 0) return;
+
+      // Filter out bookings already linked to this guest
+      const existingLinks = await this.prisma.booking_guest_access.findMany({
+        where: {
+          guest_id: guest.id,
+          ezee_reservation_id: { in: matchingBookings.map((b) => b.ezee_reservation_id) },
+        },
+        select: { ezee_reservation_id: true },
+      });
+      const linkedSet = new Set(existingLinks.map((l) => l.ezee_reservation_id));
+
+      const toLink = matchingBookings.filter((b) => !linkedSet.has(b.ezee_reservation_id));
+      if (toLink.length === 0) return;
+
+      for (const booking of toLink) {
+        const isBookerMatch =
+          (guest.email && guest.email === booking.booker_email) ||
+          (guest.phone && guest.phone === booking.booker_phone);
+
+        await this.prisma.booking_guest_access.create({
+          data: {
+            id: uuidv4(),
+            ezee_reservation_id: booking.ezee_reservation_id,
+            guest_id: guest.id,
+            role: isBookerMatch ? 'PRIMARY' : 'SECONDARY',
+            status: 'APPROVED',
+            approved_by_guest_id: guest.id,
+            approved_at: new Date(),
+          },
+        });
+
+        this.logger.log(
+          `Auto-linked guest ${guest.id} to booking ${booking.ezee_reservation_id} as ${isBookerMatch ? 'PRIMARY' : 'SECONDARY'}`,
+        );
+      }
+    } catch (err) {
+      // Non-fatal — guest can always link manually
+      this.logger.warn(`Auto-link failed for guest ${guest.id}: ${(err as Error).message}`);
+    }
   }
 
   private formatGuest(guest: {
