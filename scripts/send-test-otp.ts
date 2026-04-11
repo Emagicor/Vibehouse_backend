@@ -1,4 +1,4 @@
-C/**
+/**
  * Test script — sends a sample OTP Verification email via AWS SES.
  *
  * Usage:
