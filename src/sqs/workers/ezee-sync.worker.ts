@@ -326,8 +326,11 @@ export class EzeeSyncWorker implements SqsWorker {
     // Fetch room type for eZee IDs
     const roomType = await this.prisma.room_types.findUnique({ where: { id: room_type_id } });
     if (!roomType?.ezee_room_type_id) {
-      this.logger.error(`Room type ${room_type_id} has no eZee ID — cannot sync colive booking`);
-      return;
+      // Throw so SQS retries — do NOT silently return or the booking is lost
+      throw new Error(
+        `Room type ${room_type_id} has no ezee_room_type_id configured. ` +
+        `Run scripts/detect-ezee-room-types.ts and set the ID, then the retry will succeed.`,
+      );
     }
 
     const syncLogId = await this.createSyncLog('colive_draft_booking', draft_booking_id, 'INSERT_COLIVE_BOOKING');

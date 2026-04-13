@@ -20,11 +20,33 @@ export class GuestBookingController {
   // ─── PUBLIC (no auth) ──────────────────────────────────────────────────────
 
   /**
-   * GET /guest/booking/rooms?property_id=...&checkin=...&checkout=...
-   * Returns available room types with pricing and bed availability.
-   * No auth required — visitors can browse.
+   * GET /guest/booking/rooms?property_id=...
+   *
+   * Room CATALOG — no dates required.
+   * Returns all active room types with base prices, amenities, and physical
+   * room counts. Uses eZee Vacation Rental get_rooms API so every configured
+   * room type is always returned regardless of current availability.
+   *
+   * Frontend use: homepage / room listing page (before dates are selected).
    */
   @Get('rooms')
+  async getRoomCatalog(
+    @Query('property_id') propertyId: string,
+  ) {
+    return this.bookingService.getRoomCatalog(propertyId);
+  }
+
+  /**
+   * GET /guest/booking/availability?property_id=...&checkin=YYYY-MM-DD&checkout=YYYY-MM-DD
+   *
+   * Live AVAILABILITY — checkin and checkout are required.
+   * Returns the same room types with live eZee rates and available bed counts
+   * for the requested dates. Rooms with 0 availability appear with
+   * inventory_state="sold_out" rather than disappearing from the response.
+   *
+   * Frontend use: after guest selects dates, before the create-order step.
+   */
+  @Get('availability')
   async getRoomAvailability(
     @Query('property_id') propertyId: string,
     @Query('checkin') checkin: string,

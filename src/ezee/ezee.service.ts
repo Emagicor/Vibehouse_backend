@@ -8,6 +8,7 @@ import {
   EzeeRoomAssignment,
   EzeeRoomAvailabilityResult,
   EzeeRoomInventoryResult,
+  EzeePhysicalRoomCatalogResult,
 } from './ezee.types';
 
 /**
@@ -23,6 +24,7 @@ export class EzeeService {
   private static readonly KIOSK_PATH = '/index.php/page/service.kioskconnectivity';
   private static readonly RESERVATION_PATH = '/booking/reservation_api/listing.php';
   private static readonly PMS_PATH = '/pmsinterface/pms_connectivity.php';
+  private static readonly VACATION_RENTAL_PATH = '/channelbookings/vacation_rental.php';
 
   // Known payment method & currency IDs (from eZee RetrievePayMethods)
   private static readonly PAYMENT_ID_CASH = '6076500000000000013';
@@ -46,7 +48,58 @@ export class EzeeService {
     };
   }
 
-  // ── 1. Room Availability ─────────────────────────────────────────────────
+  // ── 1. Physical Room Catalog (all rooms, no date filter) ─────────────────
+
+  /**
+   * Fetches ALL room types from eZee unconditionally — regardless of
+   * availability or date range. Uses the Vacation Rental API endpoint.
+   *
+   * room_id returned here equals roomtypeunkid used in RoomList / InsertBooking.
+   * Use this to power the catalog layer; overlay getRoomInventory() for
+   * live rates + availability counts on specific dates.
+   */
+  async getPhysicalRooms(propertyId: string): Promise<EzeePhysicalRoomCatalogResult> {
+    const { hotelCode, authCode, baseUrl } = await this.getConnection(propertyId);
+
+    const resp = await fetch(`${baseUrl}${EzeeService.VACATION_RENTAL_PATH}`, {
+      method: 'POST',
+      headers: {
+        // AUTH_CODE goes as a separate header — the combined Content-Type format
+        // returns error 104. Two headers is the correct working format.
+        'Content-Type': 'application/json',
+        'AUTH_CODE': authCode,
+      },
+      body: JSON.stringify({
+        request_type: 'get_rooms',
+        body: { hotel_id: hotelCode },
+      }),
+    });
+
+    const data = await resp.json();
+
+    if (data.status !== 'success') {
+      throw new EzeeApiError(
+        String(data.error_code ?? 'UNKNOWN'),
+        data.error_message ?? JSON.stringify(data),
+        'get_rooms',
+      );
+    }
+
+    const rawRooms: any[] = data.data?.rooms ?? [];
+    const rooms = rawRooms.map((r) => ({
+      roomId: String(r.room_id),
+      roomName: String(r.room_name),
+      // "rooms" field is a CSV of physical room numbers: "106,107,108"
+      physicalRoomNos: r.rooms ? String(r.rooms).split(',').map((s: string) => s.trim()) : [],
+      // "room_code" field is CSV of "number : status" pairs
+      physicalRoomCodes: r.room_code ? String(r.room_code).split(',').map((s: string) => s.trim()) : [],
+    }));
+
+    this.logger.debug(`eZee get_rooms: ${rooms.map((r) => `${r.roomName}(${r.roomId})`).join(', ')}`);
+    return { rooms };
+  }
+
+  // ── 2. Room Availability (kiosk) ─────────────────────────────────────────
 
   async getRoomAvailability(
     propertyId: string,

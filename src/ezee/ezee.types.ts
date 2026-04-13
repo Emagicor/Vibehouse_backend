@@ -19,6 +19,22 @@ export interface EzeeRoomAvailabilityResult {
   rooms: EzeeRoomTypeAvailability[];
 }
 
+// ── Physical Room Catalog (Vacation Rental API) ────────────────────────────
+// POST /channelbookings/vacation_rental.php  { request_type: "get_rooms" }
+// Returns ALL room types unconditionally — no date range, no availability filter.
+// room_id here = roomtypeunkid used in RoomList / InsertBooking APIs.
+
+export interface EzeePhysicalRoomCatalogEntry {
+  roomId: string;            // = roomtypeunkid in other APIs
+  roomName: string;
+  physicalRoomNos: string[]; // e.g. ["106", "107"]
+  physicalRoomCodes: string[];// e.g. ["106 : Active", "107 : Active"]
+}
+
+export interface EzeePhysicalRoomCatalogResult {
+  rooms: EzeePhysicalRoomCatalogEntry[];
+}
+
 // ── Room Inventory (availability + rates) ─────────────────────────────────
 
 export interface EzeeRoomInventoryEntry {

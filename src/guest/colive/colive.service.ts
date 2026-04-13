@@ -84,27 +84,35 @@ export class ColiveService {
         const rates = await this.getEzeePricing(content.property_id, checkinStr, checkoutStr);
         const totalNights = this.calcNights(moveIn, moveOut);
 
-        // Find cheapest room option price
+        // Build a map of eZee roomTypeId → rate data for O(1) lookup
+        const rateMap = new Map(rates.map((r) => [r.roomTypeId, r]));
+
+        // Find cheapest room option price (across all options, not just available ones)
         let priceFrom = Infinity;
         let strikeFrom: number | undefined;
 
         for (const opt of roomOptions) {
-          const ezeeRoom = rates.find(
-            (r) => r.roomTypeId === opt.room_types.ezee_room_type_id,
-          );
-          if (ezeeRoom && ezeeRoom.ratePerNight > 0) {
-            const monthly = ezeeRoom.ratePerNight * 30;
+          const ezeeId = opt.room_types.ezee_room_type_id;
+          const ezeeRoom = ezeeId ? rateMap.get(ezeeId) : undefined;
+          // Use eZee rate if available; fall back to DB base price for catalog display
+          const ratePerNight = ezeeRoom?.ratePerNight ?? Number(opt.room_types.base_price_per_night);
+          if (ratePerNight > 0) {
+            const monthly = ratePerNight * 30;
             if (monthly < priceFrom) {
               priceFrom = monthly;
-              // If room has strike price in seed, use nightly*30 as base
               const strikeMonthly = Number(opt.room_types.base_price_per_night) * 30;
               if (strikeMonthly > monthly) strikeFrom = strikeMonthly;
             }
           }
         }
 
-        // Determine inventory state from eZee
-        const minAvail = rates.reduce((min, r) => Math.min(min, r.availability), Infinity);
+        // Overall inventory state — base on minimum availability across room options
+        // Rooms not returned by eZee (sold out on this window) → availability = 0
+        const availabilities = roomOptions.map((opt) => {
+          const ezeeId = opt.room_types.ezee_room_type_id;
+          return ezeeId ? (rateMap.get(ezeeId)?.availability ?? 0) : 0;
+        });
+        const minAvail = availabilities.length > 0 ? Math.min(...availabilities) : 0;
         const inventoryState = this.calcInventoryState(minAvail);
 
         // Apply couple/remote filter
