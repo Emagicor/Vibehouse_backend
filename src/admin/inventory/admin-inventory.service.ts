@@ -4,6 +4,7 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../redis/cache.service';
@@ -24,6 +25,7 @@ export class AdminInventoryService {
     private readonly prisma: PrismaService,
     private readonly cacheService: CacheService,
     private readonly sqsProducer: SqsProducerService,
+    private readonly config: ConfigService,
   ) {}
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -685,7 +687,7 @@ export class AdminInventoryService {
    * List all RETURNABLE products with inventory + active checkouts.
    */
   async listReturnableInventory(actor: AdminJwtPayload) {
-    const propertyId = actor.property_id ?? 'prop-bandra-001';
+    const propertyId = actor.property_id ?? this.config.getOrThrow<string>('DEFAULT_PROPERTY_ID');
 
     const items = await this.prisma.inventory.findMany({
       where: {
@@ -734,7 +736,7 @@ export class AdminInventoryService {
    * currently issued, and projected availability.
    */
   async getReturnableForecast(productId: string, days: number, actor: AdminJwtPayload) {
-    const propertyId = actor.property_id ?? 'prop-bandra-001';
+    const propertyId = actor.property_id ?? this.config.getOrThrow<string>('DEFAULT_PROPERTY_ID');
 
     // Get inventory for this product
     const inv = await this.prisma.inventory.findFirst({
@@ -880,7 +882,7 @@ export class AdminInventoryService {
     dto: ReturnableIssueDto,
     actor: AdminJwtPayload,
   ) {
-    const propertyId = actor.property_id ?? 'prop-bandra-001';
+    const propertyId = actor.property_id ?? this.config.getOrThrow<string>('DEFAULT_PROPERTY_ID');
     const quantity = dto.quantity ?? 1;
 
     // 1. Validate product is RETURNABLE

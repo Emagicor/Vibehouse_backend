@@ -9,18 +9,19 @@ async function main() {
   console.log('🌱 Starting seed...');
 
   // ─── 1. PROPERTY ────────────────────────────────────────────────────────────
-  const propertyId = 'prop-bandra-001';
+  const propertyId = process.env.DEFAULT_PROPERTY_ID ?? process.env.HOTEL_CODE ?? '60765';
   await prisma.properties.upsert({
     where: { id: propertyId },
     update: {},
     create: {
       id: propertyId,
-      name: 'Vibe House Bandra',
-      address: '12, Hill Road, Bandra West',
-      city: 'Mumbai',
+      name: 'The Daily Social - Koramangala A',
+      address: '100 Feet Road, Koramangala 4th Block',
+      city: 'Bangalore',
       branding_config: {
-        primary_color: '#FF6B35',
-        logo_url: 'https://assets.vibehouse.in/logo.png',
+        primary_color: '#7C3AED',
+        logo_url: 'https://assets.thedailysocial.in/logo.png',
+        property_code: 'TDS-KA',
       },
     },
   });
@@ -28,10 +29,10 @@ async function main() {
 
   // ─── 1b. EZEE CONNECTION ────────────────────────────────────────────────────
   await prisma.ezee_connection.upsert({
-    where: { id: 'ezee-conn-bandra-001' },
+    where: { id: 'ezee-conn-ka-001' },
     update: {},
     create: {
-      id: 'ezee-conn-bandra-001',
+      id: 'ezee-conn-ka-001',
       property_id: propertyId,
       hotel_code: process.env.HOTEL_CODE ?? '60765',
       api_key: process.env.AUTH_CODE ?? '5119488337db81be25-26ab-11f1-9',
@@ -295,7 +296,7 @@ async function main() {
   // ─── 5. BOOKING CACHE ───────────────────────────────────────────────────────
   const bookings = [
     {
-      ezee_reservation_id: 'EZEE-BND-2026-001',
+      ezee_reservation_id: 'EZEE-KA-2026-001',
       property_id: propertyId,
       guest_id: guestArjunId,
       booker_email: 'arjun@vibehouse.in',
@@ -311,7 +312,7 @@ async function main() {
       fetched_at: new Date(),
     },
     {
-      ezee_reservation_id: 'EZEE-BND-2026-002',
+      ezee_reservation_id: 'EZEE-KA-2026-002',
       property_id: propertyId,
       guest_id: guestArjunId,
       booker_email: 'arjun@vibehouse.in',
@@ -327,7 +328,7 @@ async function main() {
       fetched_at: new Date(),
     },
     {
-      ezee_reservation_id: 'EZEE-BND-2026-003',
+      ezee_reservation_id: 'EZEE-KA-2026-003',
       property_id: propertyId,
       guest_id: guestSamirId,
       booker_email: 'samir@gmail.com',
@@ -343,7 +344,7 @@ async function main() {
       fetched_at: new Date(),
     },
     {
-      ezee_reservation_id: 'EZEE-BND-2026-004',
+      ezee_reservation_id: 'EZEE-KA-2026-004',
       property_id: propertyId,
       guest_id: guestAishaId,
       booker_email: 'aisha.khan@outlook.com',
@@ -359,7 +360,7 @@ async function main() {
       fetched_at: new Date(),
     },
     {
-      ezee_reservation_id: 'EZEE-BND-2026-005',
+      ezee_reservation_id: 'EZEE-KA-2026-005',
       property_id: propertyId,
       guest_id: guestVikramId,
       booker_email: 'vikram.singh@yahoo.com',
@@ -375,7 +376,7 @@ async function main() {
       fetched_at: new Date(),
     },
     {
-      ezee_reservation_id: 'EZEE-BND-2026-006',
+      ezee_reservation_id: 'EZEE-KA-2026-006',
       property_id: propertyId,
       guest_id: guestMeeraId,
       booker_email: 'meera.joshi@gmail.com',
@@ -391,7 +392,7 @@ async function main() {
       fetched_at: new Date(),
     },
     {
-      ezee_reservation_id: 'EZEE-BND-2026-007',
+      ezee_reservation_id: 'EZEE-KA-2026-007',
       property_id: propertyId,
       guest_id: guestRahulId,
       booker_email: 'rahul.verma@protonmail.com',
@@ -408,7 +409,7 @@ async function main() {
     },
     {
       // Preethi now has a booking too
-      ezee_reservation_id: 'EZEE-BND-2026-008',
+      ezee_reservation_id: 'EZEE-KA-2026-008',
       property_id: propertyId,
       guest_id: guestPreethiId,
       booker_email: 'preethi@vibehouse.in',
@@ -440,7 +441,7 @@ async function main() {
     // Arjun = PRIMARY on booking 001
     {
       id: uuidv4(),
-      ezee_reservation_id: 'EZEE-BND-2026-001',
+      ezee_reservation_id: 'EZEE-KA-2026-001',
       guest_id: guestArjunId,
       role: 'PRIMARY',
       status: 'APPROVED',
@@ -450,7 +451,7 @@ async function main() {
     // Neha = SECONDARY on booking 001, approved by Arjun
     {
       id: uuidv4(),
-      ezee_reservation_id: 'EZEE-BND-2026-001',
+      ezee_reservation_id: 'EZEE-KA-2026-001',
       guest_id: guestNehaId,
       role: 'SECONDARY',
       status: 'APPROVED',
@@ -460,7 +461,7 @@ async function main() {
     // Arjun = PRIMARY on booking 002 (his solo trip)
     {
       id: uuidv4(),
-      ezee_reservation_id: 'EZEE-BND-2026-002',
+      ezee_reservation_id: 'EZEE-KA-2026-002',
       guest_id: guestArjunId,
       role: 'PRIMARY',
       status: 'APPROVED',
@@ -470,7 +471,7 @@ async function main() {
     // Samir = PRIMARY on booking 003
     {
       id: uuidv4(),
-      ezee_reservation_id: 'EZEE-BND-2026-003',
+      ezee_reservation_id: 'EZEE-KA-2026-003',
       guest_id: guestSamirId,
       role: 'PRIMARY',
       status: 'APPROVED',
@@ -480,7 +481,7 @@ async function main() {
     // Aisha = PRIMARY on booking 004
     {
       id: uuidv4(),
-      ezee_reservation_id: 'EZEE-BND-2026-004',
+      ezee_reservation_id: 'EZEE-KA-2026-004',
       guest_id: guestAishaId,
       role: 'PRIMARY',
       status: 'APPROVED',
@@ -490,7 +491,7 @@ async function main() {
     // Meera = SECONDARY on booking 004 (Aisha's co-guest)
     {
       id: uuidv4(),
-      ezee_reservation_id: 'EZEE-BND-2026-004',
+      ezee_reservation_id: 'EZEE-KA-2026-004',
       guest_id: guestMeeraId,
       role: 'SECONDARY',
       status: 'APPROVED',
@@ -500,7 +501,7 @@ async function main() {
     // Vikram = PRIMARY on booking 005
     {
       id: uuidv4(),
-      ezee_reservation_id: 'EZEE-BND-2026-005',
+      ezee_reservation_id: 'EZEE-KA-2026-005',
       guest_id: guestVikramId,
       role: 'PRIMARY',
       status: 'APPROVED',
@@ -510,7 +511,7 @@ async function main() {
     // Meera = PRIMARY on booking 006
     {
       id: uuidv4(),
-      ezee_reservation_id: 'EZEE-BND-2026-006',
+      ezee_reservation_id: 'EZEE-KA-2026-006',
       guest_id: guestMeeraId,
       role: 'PRIMARY',
       status: 'APPROVED',
@@ -520,7 +521,7 @@ async function main() {
     // Rahul = PRIMARY on booking 007
     {
       id: uuidv4(),
-      ezee_reservation_id: 'EZEE-BND-2026-007',
+      ezee_reservation_id: 'EZEE-KA-2026-007',
       guest_id: guestRahulId,
       role: 'PRIMARY',
       status: 'APPROVED',
@@ -530,7 +531,7 @@ async function main() {
     // Preethi = PRIMARY on booking 008
     {
       id: uuidv4(),
-      ezee_reservation_id: 'EZEE-BND-2026-008',
+      ezee_reservation_id: 'EZEE-KA-2026-008',
       guest_id: guestPreethiId,
       role: 'PRIMARY',
       status: 'APPROVED',
@@ -564,41 +565,41 @@ async function main() {
   // ─── 7. ROOM TYPES ──────────────────────────────────────────────────────
   const roomTypes = [
     {
-      id: 'rt-queen',
+      id: 'rt-ka-queen',
       property_id: propertyId,
       name: 'Queen Size Room',
       slug: 'queen-size-room',
       type: 'PRIVATE',
-      total_rooms: 15,
+      total_rooms: 12,
       beds_per_room: 1,
-      total_beds: 15,
-      base_price_per_night: 1999,
-      floor_range: '1-5',
-      amenities: ['AC', 'Attached Bathroom', 'WiFi', 'TV', 'Wardrobe'],
+      total_beds: 12,
+      base_price_per_night: 2499,
+      floor_range: '1-4',
+      amenities: ['AC', 'Attached Bathroom', 'WiFi', 'Work Desk', 'Smart Lock'],
     },
     {
-      id: 'rt-4dorm',
+      id: 'rt-ka-4dorm',
       property_id: propertyId,
       name: '4 Bed Mixed Dormitory',
       slug: '4-bed-mixed-dorm',
       type: 'DORM',
-      total_rooms: 20,
+      total_rooms: 15,
       beds_per_room: 4,
-      total_beds: 80,
-      base_price_per_night: 599,
-      floor_range: '1-5',
+      total_beds: 60,
+      base_price_per_night: 699,
+      floor_range: '1-4',
       amenities: ['AC', 'Shared Bathroom', 'WiFi', 'Personal Locker', 'Reading Light'],
     },
     {
-      id: 'rt-6dorm',
+      id: 'rt-ka-6dorm',
       property_id: propertyId,
       name: '6 Bed Mixed Dormitory',
       slug: '6-bed-mixed-dorm',
       type: 'DORM',
-      total_rooms: 4,
+      total_rooms: 5,
       beds_per_room: 6,
-      total_beds: 24,
-      base_price_per_night: 449,
+      total_beds: 30,
+      base_price_per_night: 549,
       floor_range: '1-2',
       amenities: ['AC', 'Shared Bathroom', 'WiFi', 'Personal Locker', 'Reading Light'],
     },
@@ -717,7 +718,7 @@ async function main() {
       {
         id: 'borrow-001',
         inventory_id: ironInventory.id,
-        ezee_reservation_id: 'EZEE-BND-2026-001',
+        ezee_reservation_id: 'EZEE-KA-2026-001',
         guest_id: guestArjunId,
         unit_code: 'IRN-01',
         checked_out_at: new Date('2026-03-13T10:00:00'),
@@ -727,7 +728,7 @@ async function main() {
       {
         id: 'borrow-002',
         inventory_id: dryerInventory.id,
-        ezee_reservation_id: 'EZEE-BND-2026-004',
+        ezee_reservation_id: 'EZEE-KA-2026-004',
         guest_id: guestAishaId,
         unit_code: 'DRY-01',
         checked_out_at: new Date('2026-03-12T14:30:00'),
@@ -737,7 +738,7 @@ async function main() {
       {
         id: 'borrow-003',
         inventory_id: umbrellaInventory.id,
-        ezee_reservation_id: 'EZEE-BND-2026-005',
+        ezee_reservation_id: 'EZEE-KA-2026-005',
         guest_id: guestVikramId,
         unit_code: 'UMB-01',
         checked_out_at: new Date('2026-03-13T09:15:00'),
@@ -747,7 +748,7 @@ async function main() {
       {
         id: 'borrow-004',
         inventory_id: ironInventory.id,
-        ezee_reservation_id: 'EZEE-BND-2026-006',
+        ezee_reservation_id: 'EZEE-KA-2026-006',
         guest_id: guestMeeraId,
         unit_code: 'IRN-02',
         checked_out_at: new Date('2026-03-11T16:00:00'),
@@ -757,7 +758,7 @@ async function main() {
       {
         id: 'borrow-005',
         inventory_id: umbrellaInventory.id,
-        ezee_reservation_id: 'EZEE-BND-2026-003',
+        ezee_reservation_id: 'EZEE-KA-2026-003',
         guest_id: guestSamirId,
         unit_code: 'UMB-02',
         checked_out_at: new Date('2026-03-12T18:45:00'),

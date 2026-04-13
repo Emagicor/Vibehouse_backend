@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { S3Service } from '../../aws/s3.service';
 import { CreateEventDto } from './dto/create-event.dto';
@@ -11,10 +12,11 @@ export class AdminEventsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly s3: S3Service,
+    private readonly config: ConfigService,
   ) {}
 
   async createEvent(dto: CreateEventDto, actor: AdminJwtPayload) {
-    const propertyId = actor.property_id ?? 'prop-koramangala-a';
+    const propertyId = actor.property_id ?? this.config.getOrThrow<string>('DEFAULT_PROPERTY_ID');
     const id = `evt-${uuidv4().slice(0, 8)}`;
 
     const event = await this.prisma.events.create({
@@ -103,7 +105,7 @@ export class AdminEventsService {
   }
 
   async uploadPoster(file: Express.Multer.File, actor: AdminJwtPayload) {
-    const propertyId = actor.property_id ?? 'prop-koramangala-a';
+    const propertyId = actor.property_id ?? this.config.getOrThrow<string>('DEFAULT_PROPERTY_ID');
     return this.s3.uploadFile(
       `events/${propertyId}`,
       file.originalname,

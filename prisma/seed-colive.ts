@@ -11,7 +11,7 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 // These IDs come from the main seed.ts
-const PROPERTY_ID = 'prop-bandra-001';
+const PROPERTY_ID = process.env.DEFAULT_PROPERTY_ID ?? '60765';
 
 async function main() {
   console.log('🌱 Starting colive seed...');

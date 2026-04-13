@@ -7,6 +7,7 @@ import {
   BadRequestException,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import type { Response } from 'express';
 import { AdminEventsService } from '../admin/events/admin-events.service';
 import { S3Service } from '../aws/s3.service';
@@ -16,6 +17,7 @@ export class PublicEventsController {
   constructor(
     private readonly eventsService: AdminEventsService,
     private readonly s3: S3Service,
+    private readonly config: ConfigService,
   ) {}
 
   @Get('poster')
@@ -48,7 +50,7 @@ export class PublicEventsController {
     @Query('filter') filter?: string,
   ) {
     return this.eventsService.listPublicEvents(
-      propertyId || 'prop-koramangala-a',
+      propertyId || this.config.getOrThrow<string>('DEFAULT_PROPERTY_ID'),
       filter,
     );
   }

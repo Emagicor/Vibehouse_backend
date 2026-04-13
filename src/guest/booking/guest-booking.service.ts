@@ -246,6 +246,7 @@ export class GuestBookingService {
 
     // ── eZee overlay: live rates and availability for the requested dates ──
     let ezeeMap = new Map<string, { availability: number; ratePerNight: number; ratePlanId: string; rateTypeId: string }>();
+    let availabilitySource: 'ezee_live' | 'local_db_estimate' = 'ezee_live';
 
     try {
       const inventory = await this.ezee.getRoomInventory(propertyId, checkinDate, checkoutDate);
@@ -263,6 +264,7 @@ export class GuestBookingService {
       );
     } catch (err) {
       // eZee unreachable — fall back to local DB availability estimate
+      availabilitySource = 'local_db_estimate';
       this.logger.warn(`eZee unavailable, showing DB-estimated availability: ${(err as Error).message}`);
       const { checkin, checkout } = this.parseDateRange(checkinDate, checkoutDate);
       const bookedMap = await this.getBookedBedsMap(propertyId, checkin, checkout, dbRoomTypes);
@@ -306,6 +308,10 @@ export class GuestBookingService {
       checkin_date: checkinDate,
       checkout_date: checkoutDate,
       no_of_nights: noOfNights,
+      // availability_source: tells the frontend whether data came from eZee (live)
+      // or is estimated from our local DB (degraded). Frontend should block checkout
+      // and show a warning when this is 'local_db_estimate'.
+      availability_source: availabilitySource,
       room_types: resultRoomTypes,
     };
 

@@ -1,11 +1,10 @@
 /**
  * TDS (The Daily Social) Properties Seed
  * ────────────────────────────────────────
- * Creates the two launch properties:
- *   - TDS-Koramangla-A  (prop-koramangala-a)
- *   - TDS-Koramangla-B  (prop-koramangala-b)
+ * Creates the single active launch property:
+ *   - TDS-Koramangla-A  (eZee hotel code: DEFAULT_PROPERTY_ID / HOTEL_CODE)
  *
- * Both in Koramangala, Bangalore.
+ * Koramangala B will be added when its eZee hotel code is confirmed.
  * Fully idempotent — safe to re-run.
  *
  * Run: npx ts-node --project tsconfig.json prisma/seed-tds.ts
@@ -17,16 +16,15 @@ import { v4 as uuidv4 } from 'uuid';
 
 const prisma = new PrismaClient();
 
-const PROP_A = 'prop-koramangala-a';
-const PROP_B = 'prop-koramangala-b';
+const PROP_A = process.env.DEFAULT_PROPERTY_ID ?? process.env.HOTEL_CODE ?? '60765';
+// PROP_B: add when eZee hotel code for Koramangala B is confirmed
+//   const PROP_B = process.env.TDS_KB_HOTEL_CODE ?? 'TDS_KB_PLACEHOLDER';
 
 // ── Env vars ──────────────────────────────────────────────────────────────────
 // KA: uses existing HOTEL_CODE / AUTH_CODE (already live in your .env)
-// KB: placeholder — update .env when credentials arrive
-const KA_HOTEL_CODE  = process.env.TDS_KA_HOTEL_CODE  ?? process.env.HOTEL_CODE  ?? 'TDS_KA_PLACEHOLDER';
-const KA_API_KEY     = process.env.TDS_KA_AUTH_CODE   ?? process.env.AUTH_CODE   ?? 'TDS_KA_KEY_PLACEHOLDER';
-const KB_HOTEL_CODE  = process.env.TDS_KB_HOTEL_CODE  ?? 'TDS_KB_PLACEHOLDER';
-const KB_API_KEY     = process.env.TDS_KB_AUTH_CODE   ?? 'TDS_KB_KEY_PLACEHOLDER';
+// KB: not yet configured — add TDS_KB_HOTEL_CODE + TDS_KB_AUTH_CODE when ready
+const KA_HOTEL_CODE = process.env.TDS_KA_HOTEL_CODE ?? process.env.HOTEL_CODE  ?? '60765';
+const KA_API_KEY    = process.env.TDS_KA_AUTH_CODE  ?? process.env.AUTH_CODE   ?? '5119488337db81be25-26ab-11f1-9';
 
 async function main() {
   console.log('🌱 Starting TDS property seed...\n');
@@ -50,23 +48,7 @@ async function main() {
     },
   });
 
-  await prisma.properties.upsert({
-    where: { id: PROP_B },
-    update: {},
-    create: {
-      id: PROP_B,
-      name: 'The Daily Social - Koramangala B',
-      address: 'Sarjapur Road, Koramangala 6th Block',
-      city: 'Bangalore',
-      branding_config: {
-        primary_color: '#0EA5E9',
-        logo_url: 'https://assets.thedailysocial.in/logo.png',
-        property_code: 'TDS-KB',
-      },
-    },
-  });
-
-  console.log('✅ Properties seeded: TDS-Koramangla-A, TDS-Koramangla-B');
+  console.log('✅ Property seeded: TDS-Koramangala-A');
 
   // ── 2. eZee CONNECTIONS ────────────────────────────────────────────────────
   console.log('\n🔌 Seeding eZee connections...');
@@ -84,20 +66,7 @@ async function main() {
     },
   });
 
-  await prisma.ezee_connection.upsert({
-    where: { id: 'ezee-conn-tds-kb-001' },
-    update: {},
-    create: {
-      id: 'ezee-conn-tds-kb-001',
-      property_id: PROP_B,
-      hotel_code: KB_HOTEL_CODE,
-      api_key: KB_API_KEY,
-      api_endpoint: 'https://live.ipms247.com/',
-      is_active: false, // disabled until real credentials added
-    },
-  });
-
-  console.log('✅ eZee connections seeded (KA: active, KB: disabled until creds added)');
+  console.log('✅ eZee connection seeded (KA: active)');
 
   // ── 3. ADMIN USERS ─────────────────────────────────────────────────────────
   console.log('\n👤 Seeding admin users...');
@@ -134,35 +103,6 @@ async function main() {
       role_id: 'role-maintenance-lead',
       property_id: PROP_A,
     },
-    // ── Koramangala B ──
-    {
-      email: 'manager.kb@thedailysocial.in',
-      name: 'Priaaa N (KB Manager)',
-      phone: '+919811000011',
-      role_id: 'role-manager',
-      property_id: PROP_B,
-    },
-    {
-      email: 'reception.kb@thedailysocial.in',
-      name: 'Divya P (KB Reception)',
-      phone: '+919811000012',
-      role_id: 'role-reception',
-      property_id: PROP_B,
-    },
-    {
-      email: 'housekeeping.kb@thedailysocial.in',
-      name: 'Muthu R (KB Housekeeping)',
-      phone: '+919811000013',
-      role_id: 'role-housekeeping-lead',
-      property_id: PROP_B,
-    },
-    {
-      email: 'maintenance.kb@thedailysocial.in',
-      name: 'Venkat S (KB Maintenance)',
-      phone: '+919811000014',
-      role_id: 'role-maintenance-lead',
-      property_id: PROP_B,
-    },
   ];
 
   for (const u of adminUsers) {
@@ -178,7 +118,7 @@ async function main() {
     }
   }
 
-  console.log(`✅ Admin users seeded (${adminUsers.length} users, password: TDS@2026!)`);
+  console.log(`✅ Admin users seeded (${adminUsers.length} KA users, password: TDS@2026!)`);
   adminUsers.forEach((u) => console.log(`   ${u.email}  →  ${u.name}`));
 
   // ── 4. ROOM TYPES ──────────────────────────────────────────────────────────
@@ -223,8 +163,8 @@ async function main() {
     },
   ];
 
-  for (const prop of [PROP_A, PROP_B]) {
-    const abbr = prop === PROP_A ? 'ka' : 'kb';
+  for (const prop of [PROP_A]) {
+    const abbr = 'ka';
     for (const rt of roomTypeTemplate) {
       const id = `rt-${abbr}-${rt.suffix}`;
       const exists = await prisma.room_types.findUnique({ where: { id } });
@@ -251,7 +191,7 @@ async function main() {
     }
   }
 
-  console.log('✅ Room types seeded (3 types × 2 properties = 6 total)');
+  console.log('✅ Room types seeded (3 types for KA)');
   console.log('   ⚠️  NOTE: ezee_room_type_id fields are empty. Fill them from eZee dashboard.');
 
   // ── 5. PRODUCT CATALOG (shared across properties) ─────────────────────────
@@ -317,7 +257,7 @@ async function main() {
     { productId: 'prod-umbrella',      total: 6,  threshold: 2 },
   ];
 
-  for (const prop of [PROP_A, PROP_B]) {
+  for (const prop of [PROP_A]) {
     for (const s of stockItems) {
       const exists = await prisma.inventory.findFirst({
         where: { product_id: s.productId, property_id: prop },
@@ -337,7 +277,7 @@ async function main() {
     }
   }
 
-  console.log(`✅ Inventory stock seeded (${stockItems.length} items × 2 properties)`);
+  console.log(`✅ Inventory stock seeded (${stockItems.length} items for KA)`);
 
   // ── 7. COLIVE PROPERTY CONTENT ─────────────────────────────────────────────
   console.log('\n🏠 Seeding colive property content...');
@@ -429,70 +369,7 @@ async function main() {
     },
   });
 
-  // ── Property B content ──
-  await prisma.colive_property_content.upsert({
-    where: { slug: 'tds-koramangala-b' },
-    update: {},
-    create: {
-      id: 'cprop-tds-kb-001',
-      property_id: PROP_B,
-      location_id: 'cloc-bangalore-001',
-      slug: 'tds-koramangala-b',
-      headline: 'Koramangala\'s quieter side — just as connected',
-      subheadline: 'A chill co-living space for those who like their focus uninterrupted.',
-      description:
-        'The Daily Social Koramangala B sits on Sarjapur Road — quieter than its sister property, but just as wired. Best for deep-focus workers and co-livers who want community without the noise. Spacious rooms, fast WiFi, and a rooftop that\'s hard to leave.',
-      microcopy: 'Focus mode. Bangalore.',
-      hero_image_url: 'https://assets.thedailysocial.in/colive/kb-hero.jpg',
-      secondary_image_url: 'https://assets.thedailysocial.in/colive/kb-lounge.jpg',
-      supporting_image_urls: [
-        'https://assets.thedailysocial.in/colive/kb-room.jpg',
-        'https://assets.thedailysocial.in/colive/kb-terrace.jpg',
-        'https://assets.thedailysocial.in/colive/kb-kitchen.jpg',
-      ],
-      gallery_count: 14,
-      primary_tag: 'Deep Focus',
-      secondary_tag: 'Community Vibe',
-      rating: 4.8,
-      rating_label: 'Excellent',
-      amenities: [
-        '1Gbps WiFi',
-        'Private Study Pods',
-        'AC Rooms',
-        'Weekly Housekeeping',
-        'Full Kitchen Access',
-        'Rooftop Chill Zone',
-        'Smart Locks',
-        '24/7 Security',
-      ],
-      benefits: [
-        { id: 'b1', icon: 'wifi',   title: '1Gbps Fibre',     description: 'Uninterrupted, every day' },
-        { id: 'b2', icon: 'book',   title: 'Study Pods',      description: 'Private focus booths' },
-        { id: 'b3', icon: 'shield', title: 'Zero Deposit',    description: 'Move in without a big upfront cost' },
-        { id: 'b4', icon: 'zap',    title: 'Month-to-Month',  description: 'Stay as long as you want' },
-      ],
-      stories: [
-        {
-          id: 's1',
-          name: 'Neha S.',
-          occupation: 'Product Manager',
-          image_url: 'https://assets.thedailysocial.in/colive/story-neha.jpg',
-          quote: 'Quieter than KA but same great vibe. Got more done in 3 months than a year at home.',
-          duration: '3 months',
-          stay_type: 'solo',
-        },
-      ],
-      checkout_notes: [
-        'Check-out by 11:00 AM on the last day of your stay',
-        'Room inspection conducted by our team',
-        'Smart lock access revoked automatically at checkout',
-      ],
-      recommended_for: ['remote', 'solo'],
-      is_active: true,
-    },
-  });
-
-  console.log('✅ Colive property content seeded (KA + KB)');
+  console.log('✅ Colive property content seeded (KA)');
 
   // ── 8. COLIVE ROOM OPTIONS ─────────────────────────────────────────────────
   console.log('\n🛏  Seeding colive room options...');
@@ -552,46 +429,6 @@ async function main() {
       thumbnail_url: 'https://assets.thedailysocial.in/colive/ka-room-6dorm.jpg',
       sort_order: 3,
     },
-    // ── KB ──
-    {
-      id: 'croom-tds-kb-private',
-      property_id: PROP_B,
-      room_type_id: 'rt-kb-queen',
-      slug: 'private-room',
-      name: 'Private Room',
-      description: 'Spacious private room with a quiet study-pod desk, en-suite bath, and great natural light. Perfect for deep-focus work.',
-      feature_points: ['Queen-size bed', 'En-suite bathroom', 'Study pod desk', 'Blackout curtains', 'AC + smart lock'],
-      max_guests: 2,
-      recommended_for: ['couple', 'remote'],
-      thumbnail_url: 'https://assets.thedailysocial.in/colive/kb-room-private.jpg',
-      sort_order: 1,
-    },
-    {
-      id: 'croom-tds-kb-4dorm',
-      property_id: PROP_B,
-      room_type_id: 'rt-kb-4dorm',
-      slug: '4-bed-dorm',
-      name: '4-Bed Mixed Dorm',
-      description: 'Comfortable dorm with plenty of space between beds. A quieter alternative to our KA property for solo co-livers.',
-      feature_points: ['Privacy curtain', 'Personal locker', 'Reading light', 'Shared bathroom (1:4)', 'AC + smart lock'],
-      max_guests: 1,
-      recommended_for: ['solo', 'remote'],
-      thumbnail_url: 'https://assets.thedailysocial.in/colive/kb-room-4dorm.jpg',
-      sort_order: 2,
-    },
-    {
-      id: 'croom-tds-kb-6dorm',
-      property_id: PROP_B,
-      room_type_id: 'rt-kb-6dorm',
-      slug: '6-bed-dorm',
-      name: '6-Bed Mixed Dorm',
-      description: 'Bangalore\'s best-value co-living bed on Sarjapur Road. Small community, big value.',
-      feature_points: ['Privacy curtain', 'Personal locker', 'Shared bathroom (1:6)', 'Lounge access', 'AC + smart lock'],
-      max_guests: 1,
-      recommended_for: ['solo'],
-      thumbnail_url: 'https://assets.thedailysocial.in/colive/kb-room-6dorm.jpg',
-      sort_order: 3,
-    },
   ];
 
   for (const opt of roomOptionsByProp) {
@@ -602,7 +439,7 @@ async function main() {
     });
   }
 
-  console.log('✅ Colive room options seeded (3 × 2 properties)');
+  console.log('✅ Colive room options seeded (3 for KA)');
 
   // ── 9. COLIVE ADDONS ───────────────────────────────────────────────────────
   console.log('\n🍽  Seeding colive addons...');
@@ -699,8 +536,8 @@ async function main() {
     },
   ];
 
-  for (const prop of [PROP_A, PROP_B]) {
-    const abbr = prop === PROP_A ? 'ka' : 'kb';
+  for (const prop of [PROP_A]) {
+    const abbr = 'ka';
     for (const a of addonTemplate) {
       const addonInput: AddonInput = {
         ...a,
@@ -715,27 +552,25 @@ async function main() {
     }
   }
 
-  console.log(`✅ Colive addons seeded (${addonTemplate.length} addons × 2 properties)`);
+  console.log(`✅ Colive addons seeded (${addonTemplate.length} addons for KA)`);
 
   // ── DONE ──────────────────────────────────────────────────────────────────
   console.log('\n🎉 TDS seed complete!');
   console.log('\n📋 Summary:');
-  console.log('   Properties  : prop-koramangala-a, prop-koramangala-b');
+  console.log(`   Property    : ${PROP_A} (The Daily Social - Koramangala A)`);
   console.log('   eZee KA     : active (using HOTEL_CODE / AUTH_CODE env vars)');
-  console.log('   eZee KB     : DISABLED — add TDS_KB_HOTEL_CODE + TDS_KB_AUTH_CODE to .env');
-  console.log('   Admin users : 4 per property (password: TDS@2026!)');
-  console.log('   Room types  : 3 per property (ezee_room_type_id = empty — fill from eZee dashboard)');
-  console.log('   Inventory   : 9 stock items × 2 properties');
-  console.log('   Colive      : full content, room options, addons for both properties');
+  console.log('   Admin users : 4 (password: TDS@2026!)');
+  console.log('   Room types  : 3 (ezee_room_type_id = empty — fill from eZee dashboard)');
+  console.log('   Inventory   : 9 stock items');
+  console.log('   Colive      : full content, room options, addons for KA');
   console.log('\n🔍 Test colive search for Bangalore:');
   console.log('   POST /guest/colive/search');
   console.log('   { "location_id": "cloc-bangalore-001", "location_slug": "bangalore",');
   console.log('     "move_in_date": "2026-05-01", "duration_months": 3, "stay_type": "solo" }');
   console.log('\n⚠️  NEXT STEPS:');
-  console.log('   1. Add TDS_KB_HOTEL_CODE, TDS_KB_AUTH_CODE to .env when KB eZee account is ready');
-  console.log('   2. Fill ezee_room_type_id, ezee_rate_plan_id, ezee_rate_type_id for both');
-  console.log('      property room types from the eZee PMS dashboard');
-  console.log('   3. Update admin user names/phones to real staff details');
+  console.log('   1. Fill ezee_room_type_id, ezee_rate_plan_id, ezee_rate_type_id from the eZee PMS dashboard');
+  console.log('   2. Update admin user names/phones to real staff details');
+  console.log('   3. Add KB property when TDS_KB_HOTEL_CODE is confirmed');
 }
 
 main()

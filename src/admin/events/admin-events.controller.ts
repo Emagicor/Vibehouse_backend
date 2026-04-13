@@ -12,6 +12,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ConfigService } from '@nestjs/config';
 import { AdminEventsService } from './admin-events.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
@@ -24,7 +25,10 @@ import type { AdminJwtPayload } from '../../common/guards/admin-jwt.strategy';
 @Controller('admin/events')
 @UseGuards(AdminJwtGuard, PermissionsGuard)
 export class AdminEventsController {
-  constructor(private readonly eventsService: AdminEventsService) {}
+  constructor(
+    private readonly eventsService: AdminEventsService,
+    private readonly config: ConfigService,
+  ) {}
 
   @Post()
   @RequirePermission('events.edit')
@@ -38,7 +42,7 @@ export class AdminEventsController {
   @Get()
   @RequirePermission('events.view')
   listEvents(@CurrentAdmin() actor: AdminJwtPayload) {
-    return this.eventsService.listEvents(actor.property_id ?? 'prop-bandra-001');
+    return this.eventsService.listEvents(actor.property_id ?? this.config.getOrThrow<string>('DEFAULT_PROPERTY_ID'));
   }
 
   @Get(':id')
