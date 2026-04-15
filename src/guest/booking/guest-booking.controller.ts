@@ -9,6 +9,7 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { GuestBookingService } from './guest-booking.service';
 import { LinkBookingDto } from './dto/link-booking.dto';
+import { LookupBookingDto } from './dto/lookup-booking.dto';
 import { CreateBookingOrderDto } from './dto/create-booking-order.dto';
 import { CurrentGuest } from '../../common/decorators/current-guest.decorator';
 import type { GuestJwtPayload } from '../../common/guards/guest-jwt.strategy';
@@ -53,6 +54,19 @@ export class GuestBookingController {
     @Query('checkout') checkout: string,
   ) {
     return this.bookingService.getRoomAvailability(propertyId, checkin, checkout);
+  }
+
+  /**
+   * GET /guest/booking/lookup?booking_id=EZEE-KA-123456
+   *
+   * Public booking preview — no auth required.
+   * Returns non-sensitive booking details (property, dates, room type, status).
+   * Used by the "Find my booking" flow before the guest has created an account.
+   * Booker email and phone are intentionally excluded.
+   */
+  @Get('lookup')
+  async lookupBooking(@Query() dto: LookupBookingDto) {
+    return this.bookingService.lookupBooking(dto.booking_id);
   }
 
   // ─── AUTH REQUIRED ─────────────────────────────────────────────────────────

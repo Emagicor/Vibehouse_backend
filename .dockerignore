@@ -1,0 +1,32 @@
+node_modules
+dist
+*.tsbuildinfo
+.env
+.env.local
+.env.*.local
+.env.docker
+*.log
+npm-debug.log*
+
+# Test files
+test
+test_Scripts
+*.e2e-spec.ts
+jest-e2e.json
+
+# Dev/local artifacts
+prisma.config.ts
+body.json
+signup.json
+headers.txt
+redirect.txt
+redirect_full.txt
+step1.png
+
+# Docs
+docs
+
+# Git
+.git
+.gitignore
+README.md

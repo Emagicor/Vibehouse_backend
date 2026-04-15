@@ -511,26 +511,43 @@ export class GuestStoreService {
       throw new BadRequestException(`You already have a "${product.name}" checked out`);
     }
 
-    // Create checkout record
+    // Create checkout record + decrement stock atomically.
+    // The FOR UPDATE lock inside the transaction prevents the race condition where
+    // two concurrent requests both pass the available_stock > 0 check above and
+    // both decrement — which was the root cause of available_stock going to -1.
     const checkoutId = uuidv4();
-    const checkout = await this.prisma.borrowable_checkouts.create({
-      data: {
-        id: checkoutId,
-        inventory_id: inventory.id,
-        ezee_reservation_id: eri,
-        guest_id: guest.guest_id,
-        unit_code: booking.unit_code ?? 'N/A',
-        status: 'CHECKED_OUT',
-      },
-    });
+    const checkout = await this.prisma.$transaction(async (tx) => {
+      // Re-read with a row-level lock — any concurrent transaction touching this
+      // inventory row will block here until we commit.
+      const locked = await tx.$queryRawUnsafe<{ id: string; available_stock: number }[]>(
+        `SELECT id, available_stock FROM inventory WHERE id = $1 FOR UPDATE`,
+        inventory.id,
+      );
 
-    // Decrement available stock
-    await this.prisma.inventory.update({
-      where: { id: inventory.id },
-      data: {
-        available_stock: { decrement: 1 },
-        borrowed_out_count: { increment: 1 },
-      },
+      if (!locked[0] || locked[0].available_stock <= 0) {
+        throw new BadRequestException(`"${product.name}" is currently unavailable`);
+      }
+
+      const created = await tx.borrowable_checkouts.create({
+        data: {
+          id: checkoutId,
+          inventory_id: inventory.id,
+          ezee_reservation_id: eri,
+          guest_id: guest.guest_id,
+          unit_code: booking.unit_code ?? 'N/A',
+          status: 'CHECKED_OUT',
+        },
+      });
+
+      await tx.inventory.update({
+        where: { id: inventory.id },
+        data: {
+          available_stock: { decrement: 1 },
+          borrowed_out_count: { increment: 1 },
+        },
+      });
+
+      return created;
     });
 
     // Invalidate borrowable cache

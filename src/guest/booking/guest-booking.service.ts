@@ -45,6 +45,33 @@ export class GuestBookingService {
   ) {}
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // LOOKUP BOOKING (public, no auth — booking preview by ERI)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  async lookupBooking(bookingId: string) {
+    const booking = await this.prisma.ezee_booking_cache.findFirst({
+      where: { ezee_reservation_id: bookingId, is_active: true },
+      include: { properties: { select: { name: true } } },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    // Intentionally exclude booker_email and booker_phone — this endpoint is public
+    return {
+      found: true,
+      booking_id: booking.ezee_reservation_id,
+      property_name: booking.properties?.name ?? 'The Daily Social',
+      checkin_date: booking.checkin_date,
+      checkout_date: booking.checkout_date,
+      room_type_name: booking.room_type_name,
+      status: booking.status,
+      source: booking.source,
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // LINK BOOKING (existing ERI → guest)
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -355,6 +382,26 @@ export class GuestBookingService {
 
     // Persist everything in a transaction
     const result = await this.prisma.$transaction(async (tx) => {
+      // Lock addon inventory rows before reserving — prevents two concurrent create-order
+      // calls for the same last unit from both passing the stock check and both decrementing.
+      for (const addon of validatedAddons) {
+        if (addon.product.category !== 'COMMODITY') continue;
+
+        const locked = await tx.$queryRawUnsafe<{ available_stock: number }[]>(
+          `SELECT available_stock FROM inventory
+           WHERE product_id = $1 AND property_id = $2 FOR UPDATE`,
+          addon.product.id,
+          dto.property_id,
+        );
+
+        const available = locked[0]?.available_stock ?? 0;
+        if (available < addon.quantity) {
+          throw new BadRequestException(
+            `"${addon.product.name}" — requested ${addon.quantity} but only ${available} available`,
+          );
+        }
+      }
+
       // Reserve addon inventory
       await this.reserveAddonInventory(tx, validatedAddons, dto.property_id);
 

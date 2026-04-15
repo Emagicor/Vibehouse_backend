@@ -1,7 +1,9 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../prisma/prisma.service';
 import { SqsProducerService } from '../sqs/sqs-producer.service';
 import { EzeeService } from './ezee.service';
+import { EmailService } from '../email/email.service';
 
 /**
  * eZee Reconciliation — runs on every app bootstrap AND periodically.
@@ -44,6 +46,7 @@ export class EzeeReconciliationService implements OnApplicationBootstrap {
     private readonly prisma: PrismaService,
     private readonly sqsProducer: SqsProducerService,
     private readonly ezee: EzeeService,
+    private readonly email: EmailService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -234,7 +237,7 @@ export class EzeeReconciliationService implements OnApplicationBootstrap {
    */
   private async ingestExternalBookings(): Promise<void> {
     const properties = await this.prisma.properties.findMany({
-      select: { id: true, city: true },
+      select: { id: true, city: true, name: true },
     });
 
     let ingested = 0;
@@ -303,6 +306,52 @@ export class EzeeReconciliationService implements OnApplicationBootstrap {
             `Ingested external booking: ${eri} (eZee#${res.reservationNo}, ${res.source ?? 'unknown'}, ${res.firstName} ${res.lastName})`,
           );
           ingested++;
+
+          // Immediate guest match — link and email if a TDS account already exists
+          const emailOrPhone = res.email || res.phone;
+          if (emailOrPhone) {
+            try {
+              const matchConditions: any[] = [];
+              if (res.email) matchConditions.push({ email: res.email });
+              if (res.phone) matchConditions.push({ phone: res.phone });
+
+              const match = await this.prisma.guests.findFirst({
+                where: { OR: matchConditions },
+                select: { id: true, name: true, email: true },
+              });
+
+              if (match) {
+                await this.prisma.booking_guest_access.create({
+                  data: {
+                    id: uuidv4(),
+                    ezee_reservation_id: eri,
+                    guest_id: match.id,
+                    role: 'PRIMARY',
+                    status: 'APPROVED',
+                    approved_by_guest_id: match.id,
+                    approved_at: new Date(),
+                  },
+                });
+                this.logger.log(`Immediately linked guest ${match.id} to ingested booking ${eri}`);
+
+                if (match.email) {
+                  this.email.sendOtaBookingLinkedEmail({
+                    toEmail: match.email,
+                    firstName: match.name?.split(' ')[0] ?? 'there',
+                    bookingId: eri,
+                    propertyName: property.name ?? 'The Daily Social',
+                    roomTypeName: res.roomTypeName ?? 'your room',
+                    checkinDate: res.checkin ?? '',
+                    checkoutDate: res.checkout ?? '',
+                    source: res.source ?? 'an OTA',
+                  }).catch((e: Error) => this.logger.warn(`OTA link email failed for ${eri}: ${e.message}`));
+                }
+              }
+            } catch (linkErr) {
+              // Non-fatal — autoLinkBookings() will catch this on the guest's next auth event
+              this.logger.warn(`Immediate guest match failed for ${eri}: ${(linkErr as Error).message}`);
+            }
+          }
         }
 
         // Brief pause between properties

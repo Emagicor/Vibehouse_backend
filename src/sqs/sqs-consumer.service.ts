@@ -3,6 +3,7 @@ import {
   SQSClient,
   ReceiveMessageCommand,
   DeleteMessageCommand,
+  ChangeMessageVisibilityCommand,
 } from '@aws-sdk/client-sqs';
 import type { SqsMessageEnvelope } from './types/messages';
 
@@ -128,10 +129,21 @@ export class SqsConsumerService implements OnApplicationBootstrap, OnModuleDestr
           } catch (err) {
             // Don't delete — SQS will make the message visible again after visibilityTimeout.
             // After maxReceiveCount attempts, it moves to DLQ.
-            this.logger.error(
-              `[${config.name}] Worker failed: ${(err as Error).message}`,
-              (err as Error).stack,
-            );
+            const attempt = msg.Attributes?.ApproximateReceiveCount ?? '?';
+            if (this.isDeadlock(err)) {
+              // Postgres deadlock (40P01): two concurrent writers collided on the same row.
+              // Make the message visible immediately (2 s backoff) so it retries fast
+              // instead of sitting hidden for the full visibilityTimeout window.
+              this.logger.warn(
+                `[${config.name}] DEADLOCK on attempt ${attempt} — requeueing in 2 s: ${(err as Error).message}`,
+              );
+              await this.resetVisibility(queueUrl, msg.ReceiptHandle!, 2);
+            } else {
+              this.logger.error(
+                `[${config.name}] Worker failed (attempt ${attempt}): ${(err as Error).message}`,
+                (err as Error).stack,
+              );
+            }
           }
         }
       } catch (err) {
@@ -144,5 +156,40 @@ export class SqsConsumerService implements OnApplicationBootstrap, OnModuleDestr
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Detects a PostgreSQL deadlock error (code 40P01).
+   * Prisma wraps PG errors — check both the Prisma error meta and the raw message.
+   */
+  private isDeadlock(err: unknown): boolean {
+    if (!err || typeof err !== 'object') return false;
+    const e = err as Record<string, unknown>;
+    // Prisma wraps PG error code in e.meta.code or exposes it on e.code directly
+    const code = (e['code'] as string) ?? ((e['meta'] as Record<string, unknown>)?.['code'] as string);
+    if (code === '40P01') return true;
+    // Fallback: check the raw error message
+    const msg = (e['message'] as string) ?? '';
+    return msg.toLowerCase().includes('deadlock');
+  }
+
+  /**
+   * Resets a message's visibility timeout so it becomes available again
+   * after `delaySeconds` instead of waiting the original visibilityTimeout.
+   * Used for deadlock retries to avoid unnecessary delay.
+   */
+  private async resetVisibility(queueUrl: string, receiptHandle: string, delaySeconds: number): Promise<void> {
+    try {
+      await this.sqs.send(
+        new ChangeMessageVisibilityCommand({
+          QueueUrl: queueUrl,
+          ReceiptHandle: receiptHandle,
+          VisibilityTimeout: delaySeconds,
+        }),
+      );
+    } catch (err) {
+      // Non-fatal — message will become visible after original timeout anyway
+      this.logger.warn(`Failed to reset visibility timeout: ${(err as Error).message}`);
+    }
   }
 }

@@ -478,6 +478,7 @@ export class GuestAuthService {
    */
   private async autoLinkBookings(guest: {
     id: string;
+    name: string | null;
     email: string | null;
     phone: string | null;
   }): Promise<void> {
@@ -493,7 +494,17 @@ export class GuestAuthService {
           OR: conditions,
           is_active: true,
         },
-        select: { ezee_reservation_id: true, booker_email: true, booker_phone: true, no_of_guests: true },
+        select: {
+          ezee_reservation_id: true,
+          booker_email: true,
+          booker_phone: true,
+          no_of_guests: true,
+          room_type_name: true,
+          checkin_date: true,
+          checkout_date: true,
+          source: true,
+          property_id: true,
+        },
       });
 
       if (matchingBookings.length === 0) return;
@@ -531,6 +542,28 @@ export class GuestAuthService {
         this.logger.log(
           `Auto-linked guest ${guest.id} to booking ${booking.ezee_reservation_id} as ${isBookerMatch ? 'PRIMARY' : 'SECONDARY'}`,
         );
+
+        // Email nudge for OTA bookings only (EZEE- prefix); TDS- bookings have their own confirmation flow
+        if (booking.ezee_reservation_id.startsWith('EZEE-') && guest.email) {
+          try {
+            const prop = await this.prisma.properties.findUnique({
+              where: { id: booking.property_id },
+              select: { name: true },
+            });
+            this.emailService.sendOtaBookingLinkedEmail({
+              toEmail: guest.email,
+              firstName: guest.name?.split(' ')[0] ?? 'there',
+              bookingId: booking.ezee_reservation_id,
+              propertyName: prop?.name ?? 'The Daily Social',
+              roomTypeName: booking.room_type_name ?? 'your room',
+              checkinDate: booking.checkin_date?.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) ?? '',
+              checkoutDate: booking.checkout_date?.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) ?? '',
+              source: booking.source ?? 'an OTA',
+            }).catch((e: Error) => this.logger.warn(`Auto-link email failed for ${booking.ezee_reservation_id}: ${e.message}`));
+          } catch (emailErr) {
+            this.logger.warn(`Failed to resolve property for auto-link email: ${(emailErr as Error).message}`);
+          }
+        }
       }
     } catch (err) {
       // Non-fatal — guest can always link manually

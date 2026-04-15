@@ -166,6 +166,206 @@ export class EmailService {
 </html>`;
   }
 
+  // ─── OTA BOOKING LINKED ──────────────────────────────────────────────────
+
+  async sendOtaBookingLinkedEmail(opts: {
+    toEmail: string;
+    firstName: string;
+    bookingId: string;
+    propertyName: string;
+    roomTypeName: string;
+    checkinDate: string;
+    checkoutDate: string;
+    source: string;
+  }): Promise<void> {
+    const html = this.buildOtaLinkedHtml(opts);
+    const text = this.buildOtaLinkedText(opts);
+
+    const input: SendEmailCommandInput = {
+      Source: `TheDailySocial <${this.fromAddress}>`,
+      Destination: { ToAddresses: [opts.toEmail] },
+      Message: {
+        Subject: {
+          Data: `Your ${opts.propertyName} booking is linked — complete pre-checkin`,
+          Charset: 'UTF-8',
+        },
+        Body: {
+          Html: { Data: html, Charset: 'UTF-8' },
+          Text: { Data: text, Charset: 'UTF-8' },
+        },
+      },
+    };
+
+    await this.ses.send(new SendEmailCommand(input));
+    this.logger.log(`OTA booking linked email sent to ${opts.toEmail} for booking ${opts.bookingId}`);
+  }
+
+  private buildOtaLinkedHtml(opts: {
+    firstName: string;
+    bookingId: string;
+    propertyName: string;
+    roomTypeName: string;
+    checkinDate: string;
+    checkoutDate: string;
+    source: string;
+  }): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TheDailySocial</title>
+</head>
+<body style="margin:0;padding:0;background:#f4f4f5;font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
+
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f4f4f5;padding:40px 16px;">
+    <tr>
+      <td align="center">
+
+        <table width="480" cellpadding="0" cellspacing="0" border="0"
+               style="background:#ffffff;border-radius:12px;overflow:hidden;max-width:480px;width:100%;">
+
+          <!-- Header -->
+          <tr>
+            <td style="background:#C62828;padding:24px 36px;">
+              <p style="margin:0;font-size:28px;font-weight:900;color:#ffffff;
+                         font-family:'Segoe UI',Arial,sans-serif;letter-spacing:-0.5px;">
+                TheDailySocial
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:36px 36px 0;">
+
+              <!-- Greeting -->
+              <p style="margin:0 0 6px;font-size:20px;font-weight:700;color:#111;">
+                Hey ${opts.firstName},
+              </p>
+              <p style="margin:0 0 28px;font-size:15px;color:#555;line-height:1.6;">
+                We spotted your booking from <strong style="color:#333;">${opts.source}</strong>.
+                It's now linked to your TheDailySocial account — your pre-checkin is ready to complete.
+              </p>
+
+              <!-- Booking Details -->
+              <p style="margin:0 0 10px;font-size:11px;font-weight:600;color:#999;
+                         letter-spacing:2px;text-transform:uppercase;">
+                Booking Details
+              </p>
+              <table width="100%" cellpadding="0" cellspacing="0" border="0"
+                     style="background:#fff5f5;border:2px solid #C62828;border-radius:8px;
+                            margin-bottom:28px;">
+                <tr>
+                  <td style="padding:16px 20px 12px;">
+                    <table width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td width="40%" style="padding:5px 0;font-size:12px;font-weight:600;color:#999;text-transform:uppercase;letter-spacing:1px;">Booking ID</td>
+                        <td style="padding:5px 0;font-size:14px;font-weight:700;color:#C62828;font-family:'Courier New',monospace;">${opts.bookingId}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:5px 0;font-size:12px;font-weight:600;color:#999;text-transform:uppercase;letter-spacing:1px;border-top:1px solid #fcc;">Property</td>
+                        <td style="padding:5px 0;font-size:15px;color:#111;border-top:1px solid #fcc;">${opts.propertyName}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:5px 0;font-size:12px;font-weight:600;color:#999;text-transform:uppercase;letter-spacing:1px;border-top:1px solid #fcc;">Room</td>
+                        <td style="padding:5px 0;font-size:15px;color:#111;border-top:1px solid #fcc;">${opts.roomTypeName}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:5px 0;font-size:12px;font-weight:600;color:#999;text-transform:uppercase;letter-spacing:1px;border-top:1px solid #fcc;">Check-in</td>
+                        <td style="padding:5px 0;font-size:15px;color:#111;border-top:1px solid #fcc;">${opts.checkinDate}</td>
+                      </tr>
+                      <tr>
+                        <td style="padding:5px 0;font-size:12px;font-weight:600;color:#999;text-transform:uppercase;letter-spacing:1px;border-top:1px solid #fcc;">Check-out</td>
+                        <td style="padding:5px 0;font-size:15px;color:#111;border-top:1px solid #fcc;">${opts.checkoutDate}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- CTA -->
+              <p style="margin:0 0 20px;font-size:15px;color:#555;line-height:1.6;">
+                Save time at check-in — complete your pre-checkin now and upload your ID in advance.
+              </p>
+              <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom:32px;">
+                <tr>
+                  <td style="background:#C62828;border-radius:8px;">
+                    <a href="https://thedailysocial.co.in/pre-checkin"
+                       style="display:inline-block;padding:13px 28px;font-size:15px;
+                              font-weight:700;color:#ffffff;text-decoration:none;
+                              font-family:'Segoe UI',Arial,sans-serif;">
+                      Complete Pre-Checkin →
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+              <hr style="border:none;border-top:1px solid #eee;margin:0 0 20px;" />
+              <p style="margin:0;font-size:13px;color:#aaa;line-height:1.6;">
+                Not your booking? You can safely ignore this email.
+              </p>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#fafafa;border-top:1px solid #f0f0f0;padding:18px 36px;">
+              <p style="margin:0;font-size:13px;color:#999;">
+                From the <strong style="color:#C62828;">TheDailySocial</strong> Support Team
+              </p>
+              <p style="margin:3px 0 0;font-size:12px;color:#ccc;">
+                noreply@thedailysocial.co.in
+              </p>
+            </td>
+          </tr>
+
+        </table>
+
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>`;
+  }
+
+  private buildOtaLinkedText(opts: {
+    firstName: string;
+    bookingId: string;
+    propertyName: string;
+    roomTypeName: string;
+    checkinDate: string;
+    checkoutDate: string;
+    source: string;
+  }): string {
+    return [
+      'THEDAILYSOCIAL — Your booking is linked',
+      '─'.repeat(40),
+      '',
+      `Hey ${opts.firstName},`,
+      '',
+      `We spotted your booking from ${opts.source}.`,
+      "It's now linked to your TheDailySocial account.",
+      '',
+      '── BOOKING DETAILS ──',
+      `  Booking ID  : ${opts.bookingId}`,
+      `  Property    : ${opts.propertyName}`,
+      `  Room        : ${opts.roomTypeName}`,
+      `  Check-in    : ${opts.checkinDate}`,
+      `  Check-out   : ${opts.checkoutDate}`,
+      '',
+      'Complete your pre-checkin at:',
+      '  https://thedailysocial.co.in/pre-checkin',
+      '',
+      'Not your booking? You can safely ignore this email.',
+      '',
+      '─'.repeat(40),
+      'From the TheDailySocial Support Team',
+      'noreply@thedailysocial.co.in',
+    ].join('\n');
+  }
+
   // ─── BOOKING CONFIRMATION ────────────────────────────────────────────────
 
   async sendBookingConfirmationEmail(opts: {
