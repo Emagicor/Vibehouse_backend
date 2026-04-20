@@ -73,9 +73,43 @@ export class GuestAuthService {
     // Auto-link any eZee bookings matching this guest's email/phone
     this.autoLinkBookings(guest);
 
+    // Auto-send email verification OTP so FE can immediately show the OTP screen.
+    // Fire-and-forget — a send failure must not break signup.
+    let otp_sent = false;
+    try {
+      const otp = String(Math.floor(100_000 + Math.random() * 900_000));
+      const otp_hash = await bcrypt.hash(otp, 10);
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1_000); // 10 minutes
+
+      await this.prisma.otp_logs.create({
+        data: {
+          id: uuidv4(),
+          guest_id: id,
+          recipient: dto.email,
+          channel: 'email',
+          purpose: 'email_verification',
+          otp_hash,
+          expires_at: expiresAt,
+        },
+      });
+
+      await this.emailService.sendOtpEmail({
+        toEmail: dto.email,
+        toName: dto.name,
+        otp,
+        expiresAt,
+      });
+
+      otp_sent = true;
+      this.logger.log(`Verification OTP auto-sent to ${dto.email} on signup`);
+    } catch (err) {
+      this.logger.warn(`Auto-send OTP failed for ${dto.email}: ${(err as Error).message}`);
+    }
+
     return {
       access_token: token,
       guest: this.formatGuest(guest),
+      otp_sent,
     };
   }
 
