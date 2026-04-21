@@ -183,7 +183,7 @@ export class GuestBookingService {
    * Use getRoomAvailability() when the guest has selected specific dates.
    */
   async getRoomCatalog(propertyId: string) {
-    const cacheKey = `catalog:${propertyId}`;
+    const cacheKey = CacheService.catalogKey(propertyId);
     const cached = await this.cache.get<any>(cacheKey);
     if (cached) {
       this.logger.debug(`Room catalog cache hit: ${cacheKey}`);
@@ -257,8 +257,7 @@ export class GuestBookingService {
       room_types: roomTypes,
     };
 
-    // Cache for 60 minutes — catalog changes rarely
-    await this.cache.set(cacheKey, result, 60 * 60 * 1000);
+    await this.cache.set(cacheKey, result, CacheService.TTL_CATALOG);
     return result;
   }
 
@@ -335,7 +334,8 @@ export class GuestBookingService {
       resultRoomTypes = dbRoomTypes.map((rt) => {
         const ezee = rt.ezee_room_type_id ? ezeeMap.get(rt.ezee_room_type_id) : undefined;
         const available = ezee?.availability ?? 0;
-        const ratePerNight = ezee?.ratePerNight ?? Number(rt.base_price_per_night);
+        // Use || not ?? — eZee can return ratePerNight=0 for unconfigured rate plans
+        const ratePerNight = ezee?.ratePerNight || Number(rt.base_price_per_night);
 
         return {
           id: rt.id,
@@ -618,6 +618,19 @@ export class GuestBookingService {
     );
 
     return { checkin, checkout, noOfNights };
+  }
+
+  // ─── Admin: cache flush ───────────────────────────────────────────────────
+
+  /**
+   * Flush all room catalog and availability cache entries for a property.
+   * Called by admin endpoints after room type changes or eZee re-sync.
+   */
+  async flushRoomCache(propertyId: string): Promise<{ flushed: string[] }> {
+    const keys = [CacheService.catalogKey(propertyId)];
+    await Promise.all(keys.map((k) => this.cache.del(k)));
+    this.logger.log(`Admin flushed room cache for property ${propertyId}: ${keys.join(', ')}`);
+    return { flushed: keys };
   }
 
   // ─── ERI generation ───────────────────────────────────────────────────────

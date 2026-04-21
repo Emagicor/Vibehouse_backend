@@ -5,13 +5,17 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { CacheService } from '../../redis/cache.service';
 import type { AdminJwtPayload } from '../../common/guards/admin-jwt.strategy';
 
 @Injectable()
 export class AdminBookingsService {
   private readonly logger = new Logger(AdminBookingsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cache: CacheService,
+  ) {}
 
   // ═══════════════════════════════════════════════════════════════════════════
   // LIST ALL BOOKINGS (dashboard)
@@ -182,5 +186,14 @@ export class AdminBookingsService {
         })),
       })),
     };
+  }
+
+  // ─── Cache management ─────────────────────────────────────────────────────
+
+  async flushRoomCache(propertyId: string): Promise<{ flushed: string[] }> {
+    const catalogKey = CacheService.catalogKey(propertyId);
+    await this.cache.del(catalogKey);
+    this.logger.log(`Admin flushed room catalog cache for property ${propertyId}`);
+    return { flushed: [catalogKey] };
   }
 }

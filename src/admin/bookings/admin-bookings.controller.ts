@@ -1,5 +1,6 @@
 import {
   Controller,
+  Delete,
   Get,
   Param,
   Query,
@@ -52,5 +53,18 @@ export class AdminBookingsController {
     @CurrentAdmin() admin: AdminJwtPayload,
   ) {
     return this.bookingsService.getBookingDetail(eri, admin);
+  }
+
+  /**
+   * DELETE /admin/bookings/cache/rooms?property_id=60765
+   *
+   * Flushes the room catalog Redis cache for a property so the next
+   * catalog request fetches fresh data from eZee + DB.
+   * Use after adding/updating room types or after eZee room config changes.
+   */
+  @Delete('cache/rooms')
+  @RequirePermission('bookings.view')
+  flushRoomCache(@Query('property_id') propertyId: string) {
+    return this.bookingsService.flushRoomCache(propertyId);
   }
 }

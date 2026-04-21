@@ -563,20 +563,14 @@ async function main() {
   console.log('   preethi@vibehouse.in      → PRIMARY D-102 (008)');
 
   // ─── 7. ROOM TYPES ──────────────────────────────────────────────────────
+  // eZee live room type IDs (confirmed via RoomList API, HotelCode 60765):
+  //   "6076500000000000001" → 4 Bed Mixed Dormitory  @ ₹500/night
+  //   "6076500000000000002" → Deluxe                 @ ₹1,500/night
+  // Rate plan + rate type IDs are the same value for both room types.
+  const EZEE_RATE_PLAN_ID  = '6076500000000000001';
+  const EZEE_RATE_TYPE_ID  = '6076500000000000001';
+
   const roomTypes = [
-    {
-      id: 'rt-ka-queen',
-      property_id: propertyId,
-      name: 'Queen Size Room',
-      slug: 'queen-size-room',
-      type: 'PRIVATE',
-      total_rooms: 12,
-      beds_per_room: 1,
-      total_beds: 12,
-      base_price_per_night: 2499,
-      floor_range: '1-4',
-      amenities: ['AC', 'Attached Bathroom', 'WiFi', 'Work Desk', 'Smart Lock'],
-    },
     {
       id: 'rt-ka-4dorm',
       property_id: propertyId,
@@ -586,35 +580,56 @@ async function main() {
       total_rooms: 15,
       beds_per_room: 4,
       total_beds: 60,
-      base_price_per_night: 699,
+      base_price_per_night: 500,    // live eZee rate; seed mirrors it
       floor_range: '1-4',
       amenities: ['AC', 'Shared Bathroom', 'WiFi', 'Personal Locker', 'Reading Light'],
+      ezee_room_type_id: '6076500000000000001',
+      ezee_rate_plan_id: EZEE_RATE_PLAN_ID,
+      ezee_rate_type_id: EZEE_RATE_TYPE_ID,
     },
     {
-      id: 'rt-ka-6dorm',
+      id: 'rt-ka-deluxe',
       property_id: propertyId,
-      name: '6 Bed Mixed Dormitory',
-      slug: '6-bed-mixed-dorm',
-      type: 'DORM',
-      total_rooms: 5,
-      beds_per_room: 6,
-      total_beds: 30,
-      base_price_per_night: 549,
-      floor_range: '1-2',
-      amenities: ['AC', 'Shared Bathroom', 'WiFi', 'Personal Locker', 'Reading Light'],
+      name: 'Deluxe',
+      slug: 'deluxe',
+      type: 'PRIVATE',
+      total_rooms: 14,
+      beds_per_room: 1,
+      total_beds: 14,
+      base_price_per_night: 1500,   // live eZee rate; seed mirrors it
+      floor_range: '1-4',
+      amenities: ['AC', 'Attached Bathroom', 'WiFi', 'Work Desk', 'Smart Lock'],
+      ezee_room_type_id: '6076500000000000002',
+      ezee_rate_plan_id: EZEE_RATE_PLAN_ID,
+      ezee_rate_type_id: EZEE_RATE_TYPE_ID,
     },
   ];
 
   for (const rt of roomTypes) {
-    const exists = await prisma.room_types.findUnique({ where: { id: rt.id } });
-    if (!exists) {
-      await prisma.room_types.create({ data: rt });
-    }
+    await prisma.room_types.upsert({
+      where: { id: rt.id },
+      update: {
+        ezee_room_type_id: rt.ezee_room_type_id,
+        ezee_rate_plan_id: rt.ezee_rate_plan_id,
+        ezee_rate_type_id: rt.ezee_rate_type_id,
+        base_price_per_night: rt.base_price_per_night,
+        name: rt.name,
+        is_active: true,
+      },
+      create: rt,
+    });
   }
-  console.log(`✅ Room types seeded (${roomTypes.length} types, 119 total beds)`);
-  console.log('   Queen Size Room:       15 rooms × 1 bed  = 15 beds  @ ₹1,999/night');
-  console.log('   4 Bed Mixed Dormitory: 20 rooms × 4 beds = 80 beds  @ ₹599/night');
-  console.log('   6 Bed Mixed Dormitory: 4 rooms  × 6 beds = 24 beds  @ ₹449/night');
+
+  // Deactivate legacy room types that no longer exist in eZee
+  await prisma.room_types.updateMany({
+    where: { id: { in: ['rt-ka-queen', 'rt-ka-6dorm', 'rt-queen', 'rt-4dorm', 'rt-6dorm'] } },
+    data: { is_active: false },
+  });
+
+  console.log(`✅ Room types seeded (${roomTypes.length} types)`);
+  console.log('   4 Bed Mixed Dormitory  → eZee ID 6076500000000000001 @ ₹500/night');
+  console.log('   Deluxe                 → eZee ID 6076500000000000002 @ ₹1,500/night');
+  console.log('   (rt-ka-queen, rt-ka-6dorm deactivated — not present in eZee)');
 
   // ─── 8. PRODUCT CATALOG ──────────────────────────────────────────────────
   const products = [
