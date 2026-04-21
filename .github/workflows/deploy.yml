@@ -59,6 +59,22 @@ jobs:
           echo "Migration exit code: $EXIT_CODE"
           if [ "$EXIT_CODE" != "0" ]; then echo "Migration failed" && exit 1; fi
 
+      - name: Run Prisma seed (upserts reference data — safe to re-run)
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster tds-production \
+            --task-definition tds-backend \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[subnet-0336cdf666aef4dc1,subnet-051cd40f880567176],securityGroups=[sg-0fc5c1075b47b6bf7],assignPublicIp=ENABLED}" \
+            --overrides '{"containerOverrides":[{"name":"tds-api","command":["npx","prisma","db","seed"]}]}' \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Seed task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster tds-production --tasks "$TASK_ARN"
+          EXIT_CODE=$(aws ecs describe-tasks --cluster tds-production --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[?name==`tds-api`].exitCode' --output text)
+          echo "Seed exit code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then echo "Seed failed" && exit 1; fi
+
       - name: Download current ECS task definition
         run: |
           aws ecs describe-task-definition \
