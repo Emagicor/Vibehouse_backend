@@ -66,7 +66,7 @@ jobs:
             --task-definition tds-backend \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[subnet-0336cdf666aef4dc1,subnet-051cd40f880567176],securityGroups=[sg-0fc5c1075b47b6bf7],assignPublicIp=ENABLED}" \
-            --overrides '{"containerOverrides":[{"name":"tds-api","command":["npx","ts-node","-r","tsconfig-paths/register","prisma/seed.prod.ts"]}]}' \
+            --overrides '{"containerOverrides":[{"name":"tds-api","command":["node","dist/seed/seed.prod.js"]}]}' \
             --query 'tasks[0].taskArn' --output text)
           echo "Seed task: $TASK_ARN"
           aws ecs wait tasks-stopped --cluster tds-production --tasks "$TASK_ARN"
