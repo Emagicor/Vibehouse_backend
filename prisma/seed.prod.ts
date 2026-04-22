@@ -164,46 +164,43 @@ async function main() {
   console.log('Owner admin seeded: owner@tds.com');
 
   // ── 5. Room types ────────────────────────────────────────────────────────────
+  // Only the 2 room types that have eZee rate plans (bookable online).
+  // The shared rate plan / rate type IDs are confirmed from live eZee API.
+  const EZEE_RATE_PLAN_ID = '6076500000000000001';
+  const EZEE_RATE_TYPE_ID = '6076500000000000001';
+
   const roomTypes = [
     {
       id: 'rt-ka-4dorm',
       property_id: propertyId,
       name: '4 Bed Mixed Dormitory',
-      ezee_room_type_id: '6076500000000000001',
+      slug: '4-bed-mixed-dorm',
+      type: 'DORM',
+      total_rooms: 15,
+      beds_per_room: 4,
+      total_beds: 60,
       base_price_per_night: 500,
-      is_online_bookable: true,
+      floor_range: '1-4',
+      amenities: ['AC', 'Shared Bathroom', 'WiFi', 'Personal Locker', 'Reading Light'],
+      ezee_room_type_id: '6076500000000000001',
+      ezee_rate_plan_id: EZEE_RATE_PLAN_ID,
+      ezee_rate_type_id: EZEE_RATE_TYPE_ID,
     },
     {
       id: 'rt-ka-deluxe',
       property_id: propertyId,
       name: 'Deluxe',
-      ezee_room_type_id: '6076500000000000002',
+      slug: 'deluxe',
+      type: 'PRIVATE',
+      total_rooms: 14,
+      beds_per_room: 1,
+      total_beds: 14,
       base_price_per_night: 1500,
-      is_online_bookable: true,
-    },
-    {
-      id: 'rt-ka-6dorm',
-      property_id: propertyId,
-      name: '6 Bed Mixed Dormitory',
-      ezee_room_type_id: '6076500000000000004',
-      base_price_per_night: 0,
-      is_online_bookable: false,
-    },
-    {
-      id: 'rt-ka-4dorm-female',
-      property_id: propertyId,
-      name: '4 Bed Dormitory Female',
-      ezee_room_type_id: '6076500000000000005',
-      base_price_per_night: 0,
-      is_online_bookable: false,
-    },
-    {
-      id: 'rt-ka-6dorm-female',
-      property_id: propertyId,
-      name: '6 Bed Dormitory Female',
-      ezee_room_type_id: '6076500000000000006',
-      base_price_per_night: 0,
-      is_online_bookable: false,
+      floor_range: '1-4',
+      amenities: ['AC', 'Attached Bathroom', 'WiFi', 'Work Desk', 'Smart Lock'],
+      ezee_room_type_id: '6076500000000000002',
+      ezee_rate_plan_id: EZEE_RATE_PLAN_ID,
+      ezee_rate_type_id: EZEE_RATE_TYPE_ID,
     },
   ];
 
@@ -211,15 +208,15 @@ async function main() {
     await prisma.room_types.upsert({
       where: { id: rt.id },
       update: {
-        name: rt.name,
         ezee_room_type_id: rt.ezee_room_type_id,
+        ezee_rate_plan_id: rt.ezee_rate_plan_id,
+        ezee_rate_type_id: rt.ezee_rate_type_id,
         base_price_per_night: rt.base_price_per_night,
-        is_online_bookable: rt.is_online_bookable,
       },
       create: rt,
     });
   }
-  console.log('5 room types seeded');
+  console.log('2 room types seeded (4-bed dorm @ ₹500, Deluxe @ ₹1500)');
 
   console.log('Production seed complete.');
 }
