@@ -163,6 +163,64 @@ async function main() {
   });
   console.log('Owner admin seeded: owner@tds.com');
 
+  // ── 5. Room types ────────────────────────────────────────────────────────────
+  const roomTypes = [
+    {
+      id: 'rt-ka-4dorm',
+      property_id: propertyId,
+      name: '4 Bed Mixed Dormitory',
+      ezee_room_type_id: '6076500000000000001',
+      base_price_per_night: 500,
+      is_online_bookable: true,
+    },
+    {
+      id: 'rt-ka-deluxe',
+      property_id: propertyId,
+      name: 'Deluxe',
+      ezee_room_type_id: '6076500000000000002',
+      base_price_per_night: 1500,
+      is_online_bookable: true,
+    },
+    {
+      id: 'rt-ka-6dorm',
+      property_id: propertyId,
+      name: '6 Bed Mixed Dormitory',
+      ezee_room_type_id: '6076500000000000004',
+      base_price_per_night: 0,
+      is_online_bookable: false,
+    },
+    {
+      id: 'rt-ka-4dorm-female',
+      property_id: propertyId,
+      name: '4 Bed Dormitory Female',
+      ezee_room_type_id: '6076500000000000005',
+      base_price_per_night: 0,
+      is_online_bookable: false,
+    },
+    {
+      id: 'rt-ka-6dorm-female',
+      property_id: propertyId,
+      name: '6 Bed Dormitory Female',
+      ezee_room_type_id: '6076500000000000006',
+      base_price_per_night: 0,
+      is_online_bookable: false,
+    },
+  ];
+
+  for (const rt of roomTypes) {
+    await prisma.room_types.upsert({
+      where: { id: rt.id },
+      update: {
+        name: rt.name,
+        ezee_room_type_id: rt.ezee_room_type_id,
+        base_price_per_night: rt.base_price_per_night,
+        is_online_bookable: rt.is_online_bookable,
+      },
+      create: rt,
+    });
+  }
+  console.log('5 room types seeded');
+
   console.log('Production seed complete.');
 }
 
