@@ -66,10 +66,30 @@ jobs:
             --task-definition tds-backend \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[subnet-0336cdf666aef4dc1,subnet-051cd40f880567176],securityGroups=[sg-0fc5c1075b47b6bf7],assignPublicIp=ENABLED}" \
-            --overrides '{"containerOverrides":[{"name":"tds-api","command":["node","dist/seed/seed.prod.js"]}]}' \
+            --overrides '{"containerOverrides":[{"name":"tds-api","command":["sh","-c","set -ex; ls -la dist/seed/ || true; node --version; node dist/seed/seed.prod.js"]}]}' \
             --query 'tasks[0].taskArn' --output text)
           echo "Seed task: $TASK_ARN"
+          TASK_ID="${TASK_ARN##*/}"
           aws ecs wait tasks-stopped --cluster tds-production --tasks "$TASK_ARN"
+
+          # Fetch task details (stop reason + exit code)
+          aws ecs describe-tasks --cluster tds-production --tasks "$TASK_ARN" \
+            --query 'tasks[0].{stoppedReason:stoppedReason,container:containers[0].{name:name,exitCode:exitCode,reason:reason}}' \
+            --output json
+
+          # Fetch CloudWatch logs from the seed task so we can see the actual error
+          echo "--- CloudWatch logs for seed task ---"
+          LOG_GROUP=$(aws ecs describe-task-definition --task-definition tds-backend \
+            --query 'taskDefinition.containerDefinitions[0].logConfiguration.options."awslogs-group"' --output text)
+          LOG_STREAM_PREFIX=$(aws ecs describe-task-definition --task-definition tds-backend \
+            --query 'taskDefinition.containerDefinitions[0].logConfiguration.options."awslogs-stream-prefix"' --output text)
+          LOG_STREAM="${LOG_STREAM_PREFIX}/tds-api/${TASK_ID}"
+          echo "Log group: $LOG_GROUP"
+          echo "Log stream: $LOG_STREAM"
+          aws logs get-log-events --log-group-name "$LOG_GROUP" --log-stream-name "$LOG_STREAM" \
+            --limit 200 --query 'events[].message' --output text || echo "(could not fetch logs)"
+          echo "--- end logs ---"
+
           EXIT_CODE=$(aws ecs describe-tasks --cluster tds-production --tasks "$TASK_ARN" \
             --query 'tasks[0].containers[?name==`tds-api`].exitCode' --output text)
           echo "Seed exit code: $EXIT_CODE"

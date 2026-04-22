@@ -37,6 +37,11 @@ RUN node_modules/.bin/tsc \
   --outDir dist/seed \
   prisma/seed.prod.ts
 
+# Fail loudly if seed.prod.js didn't land where deploy.yml expects
+RUN ls -la dist/seed/ && \
+    test -f dist/seed/seed.prod.js || \
+    (echo "ERROR: dist/seed/seed.prod.js not found after tsc" && find dist -name "seed.prod.js" && exit 1)
+
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────
 FROM node:20-alpine AS production
