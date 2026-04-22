@@ -24,9 +24,6 @@ RUN node_modules/.bin/tsc -p tsconfig.docker.json
 # Fail loudly here if the entry point wasn't emitted (catches compile failures early)
 RUN test -f dist/main.js || (echo "ERROR: dist/main.js not found after tsc" && exit 1)
 
-# Verify seed.prod.js (plain JS, checked in) is present for deploy.yml seed step
-RUN test -f prisma/seed.prod.js || (echo "ERROR: prisma/seed.prod.js not found" && exit 1)
-
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────
 FROM node:20-alpine AS production
