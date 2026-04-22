@@ -24,23 +24,8 @@ RUN node_modules/.bin/tsc -p tsconfig.docker.json
 # Fail loudly here if the entry point wasn't emitted (catches compile failures early)
 RUN test -f dist/main.js || (echo "ERROR: dist/main.js not found after tsc" && exit 1)
 
-# Compile production seed to plain JavaScript so the seed step can run with
-# `node` alone — no ts-node, no tsconfig-paths, no module-resolution surprises.
-RUN node_modules/.bin/tsc \
-  --module CommonJS \
-  --moduleResolution node \
-  --target ES2019 \
-  --esModuleInterop true \
-  --allowSyntheticDefaultImports true \
-  --skipLibCheck \
-  --rootDir prisma \
-  --outDir dist/seed \
-  prisma/seed.prod.ts
-
-# Fail loudly if seed.prod.js didn't land where deploy.yml expects
-RUN ls -la dist/seed/ && \
-    test -f dist/seed/seed.prod.js || \
-    (echo "ERROR: dist/seed/seed.prod.js not found after tsc" && find dist -name "seed.prod.js" && exit 1)
+# Verify seed.prod.js (plain JS, checked in) is present for deploy.yml seed step
+RUN test -f prisma/seed.prod.js || (echo "ERROR: prisma/seed.prod.js not found" && exit 1)
 
 
 # ── Stage 2: Production ───────────────────────────────────────────────────────
