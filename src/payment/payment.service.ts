@@ -1007,7 +1007,7 @@ export class PaymentService {
       : Number(roomType?.base_price_per_night ?? 0);
 
     const moveIn = new Date(draft.move_in_date);
-    const moveOut = draft.estimated_checkout ?? this.addColiveMonths(moveIn, draft.duration_months);
+    const moveOut = draft.estimated_checkout ?? this.addColiveDays(moveIn, draft.duration_days);
     const totalNights = Math.max(1, Math.ceil(
       (moveOut.getTime() - moveIn.getTime()) / (1000 * 60 * 60 * 24),
     ));
@@ -1076,9 +1076,9 @@ export class PaymentService {
     };
   }
 
-  private addColiveMonths(date: Date, months: number): Date {
+  private addColiveDays(date: Date, days: number): Date {
     const d = new Date(date);
-    d.setMonth(d.getMonth() + months);
+    d.setDate(d.getDate() + days);
     return d;
   }
 
