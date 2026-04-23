@@ -746,6 +746,11 @@ export class GuestBookingService {
     availableRooms: { id: string; name: string; available_beds: number; base_price_per_night: number; ezee_room_type_id: string | null; ezee_rate_plan_id: string | null; ezee_rate_type_id: string | null }[],
     noOfNights: number,
   ) {
+    const totalRequested = selections.reduce((sum, s) => sum + s.quantity, 0);
+    if (totalRequested > 6) {
+      throw new BadRequestException('Cannot book more than 6 units in a single order');
+    }
+
     let roomTotal = 0;
     let totalGuests = 0;
     const validatedRooms: ValidatedRoom[] = [];

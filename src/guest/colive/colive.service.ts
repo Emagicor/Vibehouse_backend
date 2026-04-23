@@ -94,15 +94,16 @@ export class ColiveService {
         for (const opt of roomOptions) {
           const ezeeId = opt.room_types.ezee_room_type_id;
           const ezeeRoom = ezeeId ? rateMap.get(ezeeId) : undefined;
-          // Use eZee rate if available; fall back to DB base price for catalog display
           const ratePerNight = ezeeRoom?.ratePerNight ?? Number(opt.room_types.base_price_per_night);
-          if (ratePerNight > 0) {
-            const monthly = ratePerNight * 30;
-            if (monthly < priceFrom) {
-              priceFrom = monthly;
-              const strikeMonthly = Number(opt.room_types.base_price_per_night) * 30;
-              if (strikeMonthly > monthly) strikeFrom = strikeMonthly;
-            }
+          // Colive monthly price: use configured colive_price_month; fall back to nightly × 30
+          const coliveMonthly = opt.room_types.colive_price_month
+            ? Number(opt.room_types.colive_price_month)
+            : Math.round(ratePerNight * 30);
+          if (coliveMonthly > 0 && coliveMonthly < priceFrom) {
+            priceFrom = coliveMonthly;
+            // Strike price = eZee nightly × 30 (what they'd pay at short-stay rates)
+            const strikeMonthly = Math.round(ratePerNight * 30);
+            if (strikeMonthly > coliveMonthly) strikeFrom = strikeMonthly;
           }
         }
 
@@ -206,8 +207,12 @@ export class ColiveService {
     const roomOptionCards = roomOptions.map((opt) => {
       const ezeeRoom = rates.find((r) => r.roomTypeId === opt.room_types.ezee_room_type_id);
       const ratePerNight = ezeeRoom?.ratePerNight ?? Number(opt.room_types.base_price_per_night);
-      const monthlyPrice = Math.round(ratePerNight * 30);
-      const strikeMonthly = Math.round(Number(opt.room_types.base_price_per_night) * 30);
+      // Colive monthly price: configured colive_price_month or fall back to nightly × 30
+      const monthlyPrice = opt.room_types.colive_price_month
+        ? Number(opt.room_types.colive_price_month)
+        : Math.round(ratePerNight * 30);
+      // Strike = eZee nightly × 30 (short-stay equivalent / "MRP")
+      const strikeMonthly = Math.round(ratePerNight * 30);
       const availableUnits = ezeeRoom?.availability ?? 0;
 
       // Couple filter
@@ -302,27 +307,33 @@ export class ColiveService {
     });
     if (!roomOption) throw new NotFoundException('Room option not found for this property');
 
-    // Fetch live eZee pricing
+    // duration_days breakdown
+    const months = Math.floor(dto.duration_days / 30);
+    const remainingDays = dto.duration_days % 30;
+
+    // colive_price_month must be configured
+    if (!roomOption.room_types.colive_price_month) {
+      throw new BadRequestException('Colive pricing not configured for this room type');
+    }
+    const coliveMonthlyPrice = Number(roomOption.room_types.colive_price_month);
+
+    // Fetch live eZee pricing for the stay window (used for extra days + savings calculation)
     const moveIn = new Date(dto.move_in_date);
-    const moveOut = this.addMonths(moveIn, dto.duration_months);
+    const moveOut = this.addDays(moveIn, dto.duration_days);
     const checkinStr = this.formatDate(moveIn);
     const checkoutStr = this.formatDate(moveOut);
-    const totalNights = this.calcNights(moveIn, moveOut);
 
     const rates = await this.getEzeePricing(dto.property_id, checkinStr, checkoutStr);
     const ezeeRoom = rates.find((r) => r.roomTypeId === roomOption.room_types.ezee_room_type_id);
 
-    // Fall back to DB base_price_per_night if eZee unavailable
-    const ratePerNight = ezeeRoom?.ratePerNight ?? Number(roomOption.room_types.base_price_per_night);
-    if (ratePerNight <= 0) {
-      throw new BadRequestException('Could not determine room pricing from eZee');
-    }
+    // eZee rate used for extra days and savings comparison
+    const ratePerNight = ezeeRoom?.ratePerNight || Number(roomOption.room_types.base_price_per_night);
 
-    // Compute room total (nightly rate × total nights in stay)
-    const roomLineTotal = Math.round(ratePerNight * totalNights);
+    // New formula: months × colive_price_month + remaining_days × ratePerNight
+    const roomLineTotal = Math.round(months * coliveMonthlyPrice + remainingDays * ratePerNight);
     const roomSubtotal = roomLineTotal;
 
-    // Process addons
+    // Process addons — per_month multiplied by months (floor)
     const addonLines: any[] = [];
     let addonSubtotal = 0;
 
@@ -339,10 +350,10 @@ export class ColiveService {
 
         const qty = Math.min(input.quantity, addon.max_quantity ?? input.quantity);
         const unitPrice = Number(addon.unit_price);
-        // per_month addons are multiplied by duration; one_time are flat
+        // per_month addons multiply by whole months; one_time are flat
         const lineTotal =
           addon.pricing_model === 'per_month'
-            ? unitPrice * qty * dto.duration_months
+            ? unitPrice * qty * months
             : unitPrice * qty;
 
         addonLines.push({
@@ -369,13 +380,19 @@ export class ColiveService {
     const taxTotal = Math.round(subtotal * GST_RATE);
     const grandTotal = subtotal + taxTotal;
 
-    const strikeMonthly = Math.round(Number(roomOption.room_types.base_price_per_night) * 30);
-    const actualMonthly = Math.round(ratePerNight * 30);
-    const monthlySavings = strikeMonthly > actualMonthly ? strikeMonthly - actualMonthly : 0;
-    const totalSavings = monthlySavings > 0 ? monthlySavings * dto.duration_months : 0;
+    // Savings: what the guest would pay at regular nightly rate for the same duration
+    const regularPrice = Math.round(ratePerNight * dto.duration_days);
+    const totalSavings = Math.max(0, regularPrice - roomLineTotal);
+    const monthlySavings = months > 0 ? Math.round(totalSavings / months) : 0;
 
+    // Strike price = eZee nightly × 30 (short-stay MRP)
+    const strikeMonthly = Math.round(ratePerNight * 30);
+
+    const extraDaysNote = remainingDays > 0
+      ? ` + ${remainingDays} day${remainingDays > 1 ? 's' : ''} at ₹${ratePerNight}/night`
+      : '';
     const pricingNotes = [
-      `Pricing includes ${totalNights} nights (${dto.duration_months} month${dto.duration_months > 1 ? 's' : ''})`,
+      `Pricing includes ${dto.duration_days} days (${months} month${months !== 1 ? 's' : ''}${extraDaysNote})`,
       'GST @ 5% applied on room + addons',
       'No security deposit required',
     ];
@@ -391,7 +408,7 @@ export class ColiveService {
         guest_id: guestId ?? null,
         room_option_id: roomOption.id,
         move_in_date: moveIn,
-        duration_months: dto.duration_months,
+        duration_days: dto.duration_days,
         stay_type: dto.stay_type,
         room_line_total: roomLineTotal,
         addons_json: addonLines,
@@ -418,9 +435,11 @@ export class ColiveService {
       room: {
         room_type_id: dto.room_type_id,
         name: roomOption.name,
-        monthly_price: actualMonthly,
-        strike_monthly_price: strikeMonthly > actualMonthly ? strikeMonthly : undefined,
-        duration_months: dto.duration_months,
+        colive_monthly_price: coliveMonthlyPrice,
+        strike_monthly_price: strikeMonthly > coliveMonthlyPrice ? strikeMonthly : undefined,
+        duration_days: dto.duration_days,
+        months,
+        remaining_days: remainingDays,
         line_total: roomLineTotal,
       },
       addons: addonLines,
@@ -465,6 +484,9 @@ export class ColiveService {
     });
     if (!property) throw new NotFoundException('Property not found');
 
+    // duration_days breakdown for per_month addon calculation
+    const months = Math.floor(dto.duration_days / 30);
+
     // Validate addon availability
     const addonLines: any[] = [];
     let addonSubtotal = 0;
@@ -486,7 +508,7 @@ export class ColiveService {
         const unitPrice = Number(addon.unit_price);
         const lineTotal =
           addon.pricing_model === 'per_month'
-            ? unitPrice * qty * dto.duration_months
+            ? unitPrice * qty * months
             : unitPrice * qty;
 
         addonLines.push({
@@ -501,14 +523,14 @@ export class ColiveService {
       }
     }
 
-    // Use quote charges (already computed from eZee)
+    // Use quote charges (already computed from pricing formula)
     const roomSubtotal = Number(quote.room_subtotal);
     const taxTotal = Number(quote.tax_total);
     const grandTotal = roomSubtotal + addonSubtotal + taxTotal;
 
     // Compute estimated checkout
     const moveIn = new Date(dto.move_in_date);
-    const estimatedCheckout = this.addMonths(moveIn, dto.duration_months);
+    const estimatedCheckout = this.addDays(moveIn, dto.duration_days);
 
     // Generate human-readable booking reference: VH-CL-YYYYMM-XXXX
     const bookingReference = this.generateBookingRef(dto.move_in_date);
@@ -525,7 +547,7 @@ export class ColiveService {
         room_option_id: roomOption.id,
         room_type_id: dto.room_type_id,
         move_in_date: moveIn,
-        duration_months: dto.duration_months,
+        duration_days: dto.duration_days,
         stay_type: dto.stay_type,
         estimated_checkout: estimatedCheckout,
         first_name: dto.guest_details.first_name,
@@ -550,7 +572,7 @@ export class ColiveService {
       room_type_id: dto.room_type_id,
       room_type_name: roomOption.name,
       move_in_date: dto.move_in_date,
-      duration_months: dto.duration_months,
+      duration_days: dto.duration_days,
       estimated_checkout_date: this.formatDate(estimatedCheckout),
       status: 'draft',
       guest_details: dto.guest_details,
@@ -596,7 +618,7 @@ export class ColiveService {
       },
       stay: {
         move_in_date: this.formatDate(draft.move_in_date),
-        duration_months: draft.duration_months,
+        duration_days: draft.duration_days,
         checkout_date_estimated: draft.estimated_checkout
           ? this.formatDate(draft.estimated_checkout)
           : undefined,
@@ -676,10 +698,17 @@ export class ColiveService {
     return undefined;
   }
 
-  /** Add N calendar months to a date */
+  /** Add N calendar months to a date (used for search/detail which stay months-based) */
   private addMonths(date: Date, months: number): Date {
     const d = new Date(date);
     d.setMonth(d.getMonth() + months);
+    return d;
+  }
+
+  /** Add N days to a date (used for quote/draft which use duration_days) */
+  private addDays(date: Date, days: number): Date {
+    const d = new Date(date);
+    d.setDate(d.getDate() + days);
     return d;
   }
 

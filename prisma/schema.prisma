@@ -593,7 +593,7 @@ model colive_quotes {
   guest_id            String?    @db.VarChar(36)
   room_option_id      String     @db.VarChar(36)
   move_in_date        DateTime   @db.Date
-  duration_months     Int
+  duration_days       Int
   stay_type           String     @db.VarChar(20)
   room_line_total     Decimal    @db.Decimal(10, 2)
   addons_json         Json?      @default("[]")
@@ -628,7 +628,7 @@ model colive_draft_bookings {
   room_option_id      String     @db.VarChar(36)
   room_type_id        String     @db.VarChar(36)
   move_in_date        DateTime   @db.Date
-  duration_months     Int
+  duration_days       Int
   stay_type           String     @db.VarChar(20)
   estimated_checkout  DateTime?  @db.Date
   first_name          String     @db.VarChar(100)
@@ -703,6 +703,7 @@ model room_types {
   ezee_room_type_id    String?               @db.VarChar(50)
   ezee_rate_plan_id    String?               @db.VarChar(50)
   ezee_rate_type_id    String?               @db.VarChar(50)
+  colive_price_month   Decimal?              @db.Decimal(10, 2)
   properties           properties            @relation(fields: [property_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   colive_room_options  colive_room_options[]
 

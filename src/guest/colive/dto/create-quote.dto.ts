@@ -1,5 +1,5 @@
 import {
-  IsString, IsNumber, IsOptional, IsIn, IsArray, ValidateNested, Min, Max,
+  IsString, IsInt, IsOptional, IsIn, IsArray, ValidateNested, Min, Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -7,7 +7,7 @@ export class QuoteAddonInputDto {
   @IsString()
   addon_id: string;
 
-  @IsNumber()
+  @IsInt()
   @Min(0)
   quantity: number;
 }
@@ -19,10 +19,10 @@ export class CreateColiveQuoteDto {
   @IsString()
   move_in_date: string; // YYYY-MM-DD
 
-  @IsNumber()
-  @Min(1)
-  @Max(24)
-  duration_months: number;
+  @IsInt()
+  @Min(30)
+  @Max(730)
+  duration_days: number;
 
   @IsIn(['solo', 'couple', 'remote'])
   stay_type: 'solo' | 'couple' | 'remote';

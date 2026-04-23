@@ -1,5 +1,5 @@
 import {
-  IsString, IsNumber, IsOptional, IsIn, IsArray, ValidateNested,
+  IsString, IsInt, IsOptional, IsIn, IsArray, ValidateNested,
   IsEmail, MinLength, Min, Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -25,7 +25,7 @@ export class DraftAddonInputDto {
   @IsString()
   addon_id: string;
 
-  @IsNumber()
+  @IsInt()
   @Min(0)
   quantity: number;
 }
@@ -43,10 +43,10 @@ export class CreateCOliveDraftBookingDto {
   @IsString()
   move_in_date: string; // YYYY-MM-DD
 
-  @IsNumber()
-  @Min(1)
-  @Max(24)
-  duration_months: number;
+  @IsInt()
+  @Min(30)
+  @Max(730)
+  duration_days: number;
 
   @IsIn(['solo', 'couple', 'remote'])
   stay_type: 'solo' | 'couple' | 'remote';

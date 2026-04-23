@@ -18,6 +18,7 @@ import { GuestKycModule } from './guest/kyc/guest-kyc.module';
 import { ColiveModule } from './guest/colive/colive.module';
 import { PaymentModule } from './payment/payment.module';
 import { AdminEventsModule } from './admin/events/admin-events.module';
+import { AdminRoomTypesModule } from './admin/room-types/admin-room-types.module';
 import { PublicModule } from './public/public.module';
 import { EmailModule } from './email/email.module';
 import { EzeeModule } from './ezee/ezee.module';
@@ -38,6 +39,7 @@ import { EzeeModule } from './ezee/ezee.module';
     AdminKycModule,
     AdminBookingsModule,
     AdminEventsModule,
+    AdminRoomTypesModule,
     GuestStoreModule,
     GuestBookingModule,
     GuestKycModule,
