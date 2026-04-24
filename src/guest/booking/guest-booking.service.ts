@@ -190,26 +190,20 @@ export class GuestBookingService {
       return cached;
     }
 
-    // Fetch all rooms from eZee (no dates) — source of truth for what exists
+    // ── eZee is source of truth for what room types exist ────────────────
     let ezeeRooms: { roomId: string; roomName: string; physicalRoomNos: string[] }[] = [];
-    let ezeeRoomMap = new Map<string, { roomName: string; physicalRoomNos: string[] }>();
     try {
       const catalog = await this.ezee.getPhysicalRooms(propertyId);
       ezeeRooms = catalog.rooms;
-      for (const r of catalog.rooms) {
-        ezeeRoomMap.set(r.roomId, { roomName: r.roomName, physicalRoomNos: r.physicalRoomNos });
-      }
-      this.logger.debug(`eZee get_rooms: ${catalog.rooms.length} room type(s) for catalog`);
+      this.logger.debug(`eZee get_rooms: ${catalog.rooms.length} room type(s)`);
     } catch (err) {
-      this.logger.warn(`eZee get_rooms unavailable, serving from local DB only: ${(err as Error).message}`);
+      this.logger.warn(`eZee get_rooms unavailable, falling back to DB: ${(err as Error).message}`);
     }
 
-    // Load enrichment data from local DB (prices, amenities, slugs).
-    // Explicit select avoids pulling colive_price_month which the catalog endpoint
-    // doesn't use — also makes this query safe if that column hasn't been migrated yet.
+    // ── DB provides enrichment (slugs, amenities, pricing, type) ─────────
+    // Explicit select keeps this safe if colive_price_month hasn't been migrated yet.
     const dbRoomTypes = await this.prisma.room_types.findMany({
       where: { property_id: propertyId, is_active: true },
-      orderBy: { base_price_per_night: 'asc' },
       select: {
         id: true,
         name: true,
@@ -223,14 +217,69 @@ export class GuestBookingService {
         ezee_room_type_id: true,
       },
     });
+    // Index DB rows by their eZee room type ID for O(1) lookup
+    const dbByEzeeId = new Map(
+      dbRoomTypes
+        .filter((r) => r.ezee_room_type_id)
+        .map((r) => [r.ezee_room_type_id as string, r]),
+    );
 
     let roomTypes: any[];
 
-    if (dbRoomTypes.length > 0) {
-      // DB has enriched room types — merge with eZee physical room counts
-      roomTypes = dbRoomTypes.map((rt) => {
-        const ezee = rt.ezee_room_type_id ? ezeeRoomMap.get(rt.ezee_room_type_id) : undefined;
+    if (ezeeRooms.length > 0) {
+      // eZee drives the list; DB enriches where a mapping exists
+      roomTypes = ezeeRooms.map((ezeeRoom) => {
+        const db = dbByEzeeId.get(ezeeRoom.roomId);
+        const physicalCount = ezeeRoom.physicalRoomNos.length;
+
+        if (db) {
+          return {
+            id: db.id,
+            name: db.name,
+            slug: db.slug,
+            type: db.type,
+            beds_per_room: db.beds_per_room,
+            total_beds: db.total_beds,
+            base_price_per_night: Number(db.base_price_per_night),
+            floor_range: db.floor_range ?? undefined,
+            amenities: (db.amenities as string[]) ?? [],
+            ezee_room_type_id: ezeeRoom.roomId,
+            physical_room_count: physicalCount,
+            bookable_online: true,
+            source: 'db',
+          };
+        }
+
+        // eZee room with no DB enrichment — shown but not online-bookable
+        const nameLower = ezeeRoom.roomName.toLowerCase();
         return {
+          id: ezeeRoom.roomId,
+          name: ezeeRoom.roomName,
+          slug: nameLower.replace(/\s+/g, '-'),
+          type: nameLower.includes('dorm') ? 'DORM' : 'PRIVATE',
+          beds_per_room: null,
+          total_beds: physicalCount,
+          base_price_per_night: null,
+          floor_range: null,
+          amenities: [],
+          ezee_room_type_id: ezeeRoom.roomId,
+          physical_room_count: physicalCount,
+          bookable_online: false,
+          source: 'ezee_only',
+        };
+      });
+      // Sort: DB-enriched (with price) first, ascending price; unenriched last
+      roomTypes.sort((a, b) => {
+        if (a.base_price_per_night === null) return 1;
+        if (b.base_price_per_night === null) return -1;
+        return a.base_price_per_night - b.base_price_per_night;
+      });
+    } else if (dbRoomTypes.length > 0) {
+      // eZee unreachable — serve from DB only, no physical counts
+      this.logger.warn(`eZee unreachable for property ${propertyId}, serving DB catalog`);
+      roomTypes = dbRoomTypes
+        .sort((a, b) => Number(a.base_price_per_night) - Number(b.base_price_per_night))
+        .map((rt) => ({
           id: rt.id,
           name: rt.name,
           slug: rt.slug,
@@ -241,36 +290,15 @@ export class GuestBookingService {
           floor_range: rt.floor_range ?? undefined,
           amenities: (rt.amenities as string[]) ?? [],
           ezee_room_type_id: rt.ezee_room_type_id,
-          physical_room_count: ezee?.physicalRoomNos.length ?? null,
-          source: 'db',
-        };
-      });
-    } else if (ezeeRooms.length > 0) {
-      // DB empty — serve directly from eZee with minimal shape
-      this.logger.warn(`room_types table empty for property ${propertyId}, serving eZee catalog directly`);
-      roomTypes = ezeeRooms.map((r) => ({
-        id: r.roomId,
-        name: r.roomName,
-        slug: r.roomName.toLowerCase().replace(/\s+/g, '-'),
-        type: 'DORM',
-        beds_per_room: null,
-        total_beds: r.physicalRoomNos.length || null,
-        base_price_per_night: null,
-        floor_range: null,
-        amenities: [],
-        ezee_room_type_id: r.roomId,
-        physical_room_count: r.physicalRoomNos.length,
-        source: 'ezee_only',
-      }));
+          physical_room_count: null,
+          bookable_online: true,
+          source: 'db_fallback',
+        }));
     } else {
       throw new NotFoundException('No room types found for this property');
     }
 
-    const result = {
-      property_id: propertyId,
-      room_types: roomTypes,
-    };
-
+    const result = { property_id: propertyId, room_types: roomTypes };
     await this.cache.set(cacheKey, result, CacheService.TTL_CATALOG);
     return result;
   }
@@ -292,16 +320,10 @@ export class GuestBookingService {
 
     const { noOfNights } = this.parseDateRange(checkinDate, checkoutDate);
 
-    // ── Catalog base: always load from local DB ───────────────────────────
-    // We always return ALL active room types from the DB so the frontend can
-    // render a full catalog. eZee data is merged on top for live rates and
-    // availability counts. A room sold out on the requested dates shows
-    // available_beds=0 rather than vanishing from the response entirely.
-    // Explicit select avoids pulling colive_price_month (not needed here) and
-    // keeps this query safe if that column hasn't been migrated yet.
+    // ── DB enrichment map (keyed by ezee_room_type_id) ───────────────────
+    // Explicit select keeps this safe if colive_price_month hasn't migrated yet.
     const dbRoomTypes = await this.prisma.room_types.findMany({
       where: { property_id: propertyId, is_active: true },
-      orderBy: { base_price_per_night: 'asc' },
       select: {
         id: true,
         name: true,
@@ -316,92 +338,89 @@ export class GuestBookingService {
         ezee_rate_type_id: true,
       },
     });
+    const dbByEzeeId = new Map(
+      dbRoomTypes
+        .filter((r) => r.ezee_room_type_id)
+        .map((r) => [r.ezee_room_type_id as string, r]),
+    );
 
-    // ── eZee: live rates and availability for the requested dates ─────────
+    // ── eZee: live rates and availability — source of truth ───────────────
     let ezeeInventory: { roomTypeId: string; roomTypeName: string; availability: number; ratePerNight: number; ratePlanId: string; rateTypeId: string }[] = [];
-    let ezeeMap = new Map<string, { availability: number; ratePerNight: number; ratePlanId: string; rateTypeId: string }>();
     let availabilitySource: 'ezee_live' | 'local_db_estimate' = 'ezee_live';
 
     try {
       const inventory = await this.ezee.getRoomInventory(propertyId, checkinDate, checkoutDate);
       ezeeInventory = inventory.rooms;
-      for (const room of inventory.rooms) {
-        ezeeMap.set(room.roomTypeId, {
-          availability: room.availability,
-          ratePerNight: room.ratePerNight,
-          ratePlanId: room.ratePlanId,
-          rateTypeId: room.rateTypeId,
-        });
-      }
       this.logger.debug(
-        `eZee RoomList returned ${inventory.rooms.length} type(s) for ${checkinDate}→${checkoutDate}. ` +
-        `DB has ${dbRoomTypes.length} active type(s).`,
+        `eZee RoomList: ${inventory.rooms.length} type(s) for ${checkinDate}→${checkoutDate}`,
       );
     } catch (err) {
       availabilitySource = 'local_db_estimate';
-      this.logger.warn(`eZee unavailable, showing DB-estimated availability: ${(err as Error).message}`);
-      if (dbRoomTypes.length > 0) {
-        const { checkin, checkout } = this.parseDateRange(checkinDate, checkoutDate);
-        const bookedMap = await this.getBookedBedsMap(propertyId, checkin, checkout, dbRoomTypes);
-        for (const rt of dbRoomTypes) {
-          if (rt.ezee_room_type_id) {
-            ezeeMap.set(rt.ezee_room_type_id, {
-              availability: Math.max(0, rt.total_beds - (bookedMap.get(rt.id) ?? 0)),
-              ratePerNight: Number(rt.base_price_per_night),
-              ratePlanId: rt.ezee_rate_plan_id ?? '',
-              rateTypeId: rt.ezee_rate_type_id ?? '',
-            });
-          }
-        }
-      }
+      this.logger.warn(`eZee unavailable, falling back to DB estimate: ${(err as Error).message}`);
     }
 
     let resultRoomTypes: any[];
 
-    if (dbRoomTypes.length > 0) {
-      // ── Merge: DB catalog + eZee live data ──────────────────────────────
-      resultRoomTypes = dbRoomTypes.map((rt) => {
-        const ezee = rt.ezee_room_type_id ? ezeeMap.get(rt.ezee_room_type_id) : undefined;
-        const available = ezee?.availability ?? 0;
-        // Use || not ?? — eZee can return ratePerNight=0 for unconfigured rate plans
-        const ratePerNight = ezee?.ratePerNight || Number(rt.base_price_per_night);
+    if (ezeeInventory.length > 0) {
+      // ── eZee drives the list; DB enriches where a mapping exists ────────
+      resultRoomTypes = ezeeInventory.map((room) => {
+        const db = dbByEzeeId.get(room.roomTypeId);
+        const available = room.availability;
+        // || not ?? — eZee returns 0 for unconfigured rate plans, fall back to DB price
+        const ratePerNight = room.ratePerNight || (db ? Number(db.base_price_per_night) : 0);
+        const nameLower = room.roomTypeName.toLowerCase();
 
         return {
-          id: rt.id,
-          name: rt.name,
-          slug: rt.slug,
-          type: rt.type,
+          id: db?.id ?? room.roomTypeId,
+          name: db?.name ?? room.roomTypeName,
+          slug: db?.slug ?? nameLower.replace(/\s+/g, '-'),
+          type: db?.type ?? (nameLower.includes('dorm') ? 'DORM' : 'PRIVATE'),
           available_beds: available,
           inventory_state: available <= 0 ? 'sold_out' : available <= 2 ? 'limited' : 'available',
           base_price_per_night: ratePerNight,
           total_price: ratePerNight * noOfNights,
-          amenities: (rt.amenities as string[]) ?? [],
-          floor_range: rt.floor_range ?? undefined,
-          ezee_room_type_id: rt.ezee_room_type_id,
-          ezee_rate_plan_id: ezee?.ratePlanId ?? rt.ezee_rate_plan_id,
-          ezee_rate_type_id: ezee?.rateTypeId ?? rt.ezee_rate_type_id,
-          source: 'db',
+          amenities: (db?.amenities as string[]) ?? [],
+          floor_range: db?.floor_range ?? undefined,
+          ezee_room_type_id: room.roomTypeId,
+          ezee_rate_plan_id: room.ratePlanId || db?.ezee_rate_plan_id,
+          ezee_rate_type_id: room.rateTypeId || db?.ezee_rate_type_id,
+          bookable_online: !!db,
+          source: db ? 'db' : 'ezee_only',
         };
       });
-    } else if (ezeeInventory.length > 0) {
-      // DB empty — serve directly from eZee live inventory
-      this.logger.warn(`room_types table empty for property ${propertyId}, serving eZee availability directly`);
-      resultRoomTypes = ezeeInventory.map((room) => ({
-        id: room.roomTypeId,
-        name: room.roomTypeName,
-        slug: room.roomTypeName.toLowerCase().replace(/\s+/g, '-'),
-        type: 'DORM',
-        available_beds: room.availability,
-        inventory_state: room.availability <= 0 ? 'sold_out' : room.availability <= 2 ? 'limited' : 'available',
-        base_price_per_night: room.ratePerNight,
-        total_price: room.ratePerNight * noOfNights,
-        amenities: [],
-        floor_range: null,
-        ezee_room_type_id: room.roomTypeId,
-        ezee_rate_plan_id: room.ratePlanId,
-        ezee_rate_type_id: room.rateTypeId,
-        source: 'ezee_only',
-      }));
+      // Sort: cheapest first; rooms with rate=0 last
+      resultRoomTypes.sort((a, b) => {
+        if (!a.base_price_per_night) return 1;
+        if (!b.base_price_per_night) return -1;
+        return a.base_price_per_night - b.base_price_per_night;
+      });
+    } else if (dbRoomTypes.length > 0) {
+      // ── eZee unavailable — DB-estimated availability ─────────────────────
+      const { checkin, checkout } = this.parseDateRange(checkinDate, checkoutDate);
+      const bookedMap = await this.getBookedBedsMap(propertyId, checkin, checkout, dbRoomTypes);
+      resultRoomTypes = dbRoomTypes
+        .sort((a, b) => Number(a.base_price_per_night) - Number(b.base_price_per_night))
+        .map((rt) => {
+          const available = Math.max(0, rt.total_beds - (bookedMap.get(rt.id) ?? 0));
+          const ratePerNight = Number(rt.base_price_per_night);
+          return {
+            id: rt.id,
+            name: rt.name,
+            slug: rt.slug,
+            type: rt.type,
+            available_beds: available,
+            inventory_state: available <= 0 ? 'sold_out' : available <= 2 ? 'limited' : 'available',
+            base_price_per_night: ratePerNight,
+            total_price: ratePerNight * noOfNights,
+            amenities: (rt.amenities as string[]) ?? [],
+            floor_range: rt.floor_range ?? undefined,
+            ezee_room_type_id: rt.ezee_room_type_id,
+            ezee_rate_plan_id: rt.ezee_rate_plan_id,
+            ezee_rate_type_id: rt.ezee_rate_type_id,
+            bookable_online: true,
+            source: 'db_fallback',
+          };
+        });
     } else {
       throw new NotFoundException('No room types found for this property');
     }
