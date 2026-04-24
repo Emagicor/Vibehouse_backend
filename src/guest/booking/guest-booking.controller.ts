@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Post,
   Get,
@@ -53,6 +54,12 @@ export class GuestBookingController {
     @Query('checkin') checkin: string,
     @Query('checkout') checkout: string,
   ) {
+    if (!checkin || !checkout) {
+      throw new BadRequestException('checkin and checkout query params are required');
+    }
+    if (!propertyId) {
+      throw new BadRequestException('property_id query param is required');
+    }
     return this.bookingService.getRoomAvailability(propertyId, checkin, checkout);
   }
 

@@ -204,10 +204,24 @@ export class GuestBookingService {
       this.logger.warn(`eZee get_rooms unavailable, serving from local DB only: ${(err as Error).message}`);
     }
 
-    // Load enrichment data from local DB (prices, amenities, slugs)
+    // Load enrichment data from local DB (prices, amenities, slugs).
+    // Explicit select avoids pulling colive_price_month which the catalog endpoint
+    // doesn't use — also makes this query safe if that column hasn't been migrated yet.
     const dbRoomTypes = await this.prisma.room_types.findMany({
       where: { property_id: propertyId, is_active: true },
       orderBy: { base_price_per_night: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        type: true,
+        beds_per_room: true,
+        total_beds: true,
+        base_price_per_night: true,
+        floor_range: true,
+        amenities: true,
+        ezee_room_type_id: true,
+      },
     });
 
     let roomTypes: any[];
@@ -283,9 +297,24 @@ export class GuestBookingService {
     // render a full catalog. eZee data is merged on top for live rates and
     // availability counts. A room sold out on the requested dates shows
     // available_beds=0 rather than vanishing from the response entirely.
+    // Explicit select avoids pulling colive_price_month (not needed here) and
+    // keeps this query safe if that column hasn't been migrated yet.
     const dbRoomTypes = await this.prisma.room_types.findMany({
       where: { property_id: propertyId, is_active: true },
       orderBy: { base_price_per_night: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        type: true,
+        total_beds: true,
+        base_price_per_night: true,
+        floor_range: true,
+        amenities: true,
+        ezee_room_type_id: true,
+        ezee_rate_plan_id: true,
+        ezee_rate_type_id: true,
+      },
     });
 
     // ── eZee: live rates and availability for the requested dates ─────────
@@ -606,9 +635,19 @@ export class GuestBookingService {
   // ─── Date parsing ─────────────────────────────────────────────────────────
 
   private parseDateRange(checkinDate: string, checkoutDate: string) {
+    if (!checkinDate || !checkoutDate) {
+      throw new BadRequestException('checkin and checkout dates are required');
+    }
+
     const checkin = new Date(checkinDate);
     const checkout = new Date(checkoutDate);
 
+    if (isNaN(checkin.getTime())) {
+      throw new BadRequestException(`Invalid checkin date: "${checkinDate}"`);
+    }
+    if (isNaN(checkout.getTime())) {
+      throw new BadRequestException(`Invalid checkout date: "${checkoutDate}"`);
+    }
     if (checkout <= checkin) {
       throw new BadRequestException('Checkout must be after checkin');
     }
