@@ -3,6 +3,7 @@ import {
   Logger,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CacheService } from '../../redis/cache.service';
@@ -983,6 +984,51 @@ export class GuestBookingService {
       label: slot.label,
       guest_id: slot.guest_id,
       kyc_status: slot.kyc_status,
+    };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CHECK-IN STATUS (auth required — guest must be linked to the booking)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  async getCheckinStatus(guestId: string, bookingId: string) {
+    const booking = await this.prisma.ezee_booking_cache.findFirst({
+      where: { ezee_reservation_id: bookingId },
+      include: { properties: { select: { name: true } } },
+    });
+
+    if (!booking) {
+      throw new NotFoundException('Booking not found');
+    }
+
+    const access = await this.prisma.booking_guest_access.findFirst({
+      where: { ezee_reservation_id: bookingId, guest_id: guestId, status: 'APPROVED' },
+    });
+
+    if (!access) {
+      throw new ForbiddenException('You are not linked to this booking');
+    }
+
+    const lockAccess = await this.prisma.smart_lock_access.findFirst({
+      where: { ezee_reservation_id: bookingId, pin_status: 'ACTIVE' },
+      orderBy: { created_at: 'desc' },
+    });
+
+    return {
+      booking_id: booking.ezee_reservation_id,
+      status: booking.status,
+      room_number: booking.room_number,
+      property_name: booking.properties?.name ?? 'The Daily Social',
+      checkin_date: booking.checkin_date,
+      checkout_date: booking.checkout_date,
+      lock_access: lockAccess
+        ? {
+            pin: lockAccess.mygate_pin,
+            valid_from: lockAccess.valid_from,
+            valid_until: lockAccess.valid_until,
+            pin_status: lockAccess.pin_status,
+          }
+        : null,
     };
   }
 }

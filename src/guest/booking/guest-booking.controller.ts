@@ -117,4 +117,21 @@ export class GuestBookingController {
   ) {
     return this.bookingService.createBookingOrder(guest.guest_id, dto);
   }
+
+  /**
+   * GET /guest/booking/checkin-status?booking_id=<ERI>
+   * Returns current check-in status and smart lock PIN for the booking.
+   * Guest must be linked (approved) to the booking.
+   */
+  @UseGuards(AuthGuard('guest-jwt'))
+  @Get('checkin-status')
+  async getCheckinStatus(
+    @CurrentGuest() guest: GuestJwtPayload,
+    @Query('booking_id') bookingId: string,
+  ) {
+    if (!bookingId) {
+      throw new BadRequestException('booking_id query param is required');
+    }
+    return this.bookingService.getCheckinStatus(guest.guest_id, bookingId);
+  }
 }

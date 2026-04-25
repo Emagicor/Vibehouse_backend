@@ -3,10 +3,12 @@ import {
   Delete,
   Get,
   Param,
+  Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import { AdminBookingsService } from './admin-bookings.service';
+import { EzeeReconciliationService } from '../../ezee/ezee-reconciliation.service';
 import { AdminJwtGuard } from '../../common/guards/admin-jwt.guard';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -16,7 +18,10 @@ import type { AdminJwtPayload } from '../../common/guards/admin-jwt.strategy';
 @Controller('admin/bookings')
 @UseGuards(AdminJwtGuard, PermissionsGuard)
 export class AdminBookingsController {
-  constructor(private readonly bookingsService: AdminBookingsService) {}
+  constructor(
+    private readonly bookingsService: AdminBookingsService,
+    private readonly reconciliation: EzeeReconciliationService,
+  ) {}
 
   // ─── BOOKING DASHBOARD ──────────────────────────────────────────────────
 
@@ -66,5 +71,18 @@ export class AdminBookingsController {
   @RequirePermission('bookings.view')
   flushRoomCache(@Query('property_id') propertyId: string) {
     return this.bookingsService.flushRoomCache(propertyId);
+  }
+
+  /**
+   * POST /admin/bookings/trigger-reconcile
+   * Immediately runs the eZee reconciliation pass — detects check-in/checkout
+   * status drift and provisions MyGate PINs. Use during testing instead of
+   * waiting for the 15-minute cron poll.
+   */
+  @Post('trigger-reconcile')
+  @RequirePermission('bookings.view')
+  async triggerReconcile(@CurrentAdmin() _admin: AdminJwtPayload) {
+    await this.reconciliation.reconcile();
+    return { ok: true, message: 'Reconciliation complete' };
   }
 }

@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { SqsProducerService } from '../sqs/sqs-producer.service';
 import { EzeeService } from './ezee.service';
 import { EmailService } from '../email/email.service';
+import { MyGateService } from '../mygate/mygate.service';
 
 /**
  * eZee Reconciliation — runs on every app bootstrap AND periodically.
@@ -47,6 +48,7 @@ export class EzeeReconciliationService implements OnApplicationBootstrap {
     private readonly sqsProducer: SqsProducerService,
     private readonly ezee: EzeeService,
     private readonly email: EmailService,
+    private readonly mygate: MyGateService,
   ) {}
 
   async onApplicationBootstrap(): Promise<void> {
@@ -140,6 +142,7 @@ export class EzeeReconciliationService implements OnApplicationBootstrap {
         status: true,
         room_number: true,
         checkin_date: true,
+        checkout_date: true,
       },
     });
 
@@ -186,6 +189,16 @@ export class EzeeReconciliationService implements OnApplicationBootstrap {
             cancelled++;
           } else if (ezeeStatus === 'CHECKED_IN') {
             checkedIn++;
+            // Provision MyGate lock access — fire-and-forget, non-blocking
+            this.mygate.provisionLockAccess({
+              eri: booking.ezee_reservation_id,
+              propertyId: booking.property_id,
+              roomNumber: ezeeRoomName ?? booking.room_number,
+              checkin: booking.checkin_date,
+              checkout: booking.checkout_date ?? null,
+            }).catch((err: Error) =>
+              this.logger.error(`MyGate provision error for ${booking.ezee_reservation_id}: ${err.message}`),
+            );
           } else if (ezeeStatus === 'CHECKED_OUT') {
             updates.is_active = false;
             checkedOut++;
