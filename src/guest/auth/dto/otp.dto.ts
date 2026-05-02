@@ -1,4 +1,4 @@
-import { IsEmail, IsString, Length, MinLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsString, Length, MinLength } from 'class-validator';
 
 export class SendOtpDto {
   @IsEmail()
@@ -30,5 +30,19 @@ export class ResetPasswordDto {
   @IsString()
   @MinLength(8, { message: 'Password must be at least 8 characters' })
   newPassword: string;
+}
+
+export class VerifyTwoFaDto {
+  @IsEmail()
+  email: string;
+
+  @IsString()
+  @Length(6, 6, { message: 'OTP must be exactly 6 digits' })
+  otp: string;
+}
+
+export class ToggleTwoFaDto {
+  @IsBoolean()
+  enabled: boolean;
 }
 

@@ -1,10 +1,10 @@
-import { Controller, Post, Get, Body, UseGuards, Req, Res, Logger } from '@nestjs/common';
+import { Controller, Post, Get, Patch, Body, UseGuards, Req, Res, Logger } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import type { Request, Response } from 'express';
 import { GuestAuthService } from './guest-auth.service';
 import { GuestSignupDto } from './dto/signup.dto';
 import { GuestLoginDto } from './dto/login.dto';
-import { SendOtpDto, VerifyOtpDto, ForgotPasswordDto, ResetPasswordDto } from './dto/otp.dto';
+import { SendOtpDto, VerifyOtpDto, ForgotPasswordDto, ResetPasswordDto, VerifyTwoFaDto, ToggleTwoFaDto } from './dto/otp.dto';
 import { GuestJwtGuard } from '../../common/guards/guest-jwt.guard';
 import { CurrentGuest } from '../../common/decorators/current-guest.decorator';
 import type { GuestJwtPayload } from '../../common/guards/guest-jwt.strategy';
@@ -76,6 +76,19 @@ export class GuestAuthController {
   @Post('reset-password')
   resetPassword(@Body() dto: ResetPasswordDto) {
     return this.guestAuthService.resetPassword(dto.email, dto.otp, dto.newPassword);
+  }
+
+  // ─── TWO-FACTOR AUTH ───────────────────────────────────────────────────────
+
+  @Post('verify-2fa')
+  verifyTwoFa(@Body() dto: VerifyTwoFaDto) {
+    return this.guestAuthService.verifyTwoFa(dto.email, dto.otp);
+  }
+
+  @Patch('2fa')
+  @UseGuards(GuestJwtGuard)
+  toggleTwoFa(@CurrentGuest() guest: GuestJwtPayload, @Body() dto: ToggleTwoFaDto) {
+    return this.guestAuthService.toggleTwoFa(guest.guest_id, dto.enabled);
   }
 
   // ─── GOOGLE OAUTH ──────────────────────────────────────────────────────────

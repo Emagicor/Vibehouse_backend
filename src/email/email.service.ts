@@ -24,7 +24,7 @@ export class EmailService {
     toName: string;
     otp: string;
     expiresAt: Date;
-    purpose?: 'email_verification' | 'password_reset';
+    purpose?: 'email_verification' | 'password_reset' | 'two_fa';
   }): Promise<void> {
     const { toEmail, toName, otp, expiresAt, purpose = 'email_verification' } = opts;
 
@@ -38,20 +38,36 @@ export class EmailService {
       hour12: true,
     });
 
-    const copy = purpose === 'password_reset'
-      ? {
-          subject: '🔑 TheDailySocial — Password reset code',
-          heading: 'We received a request to reset your password.',
-          label: 'Password reset code',
-        }
-      : {
-          subject: '🔐 Your TheDailySocial verification code',
-          heading: 'Use the code below to verify your email address.',
-          label: 'Your verification code',
-        };
+    const copy =
+      purpose === 'password_reset'
+        ? {
+            subject: '🔑 TheDailySocial — Password reset code',
+            heading: 'We received a request to reset your password.',
+            label: 'Password reset code',
+          }
+        : purpose === 'two_fa'
+          ? {
+              subject: '🔐 TheDailySocial — Login verification code',
+              heading: 'Enter this code to complete your login.',
+              label: 'Login verification code',
+            }
+          : {
+              subject: '🔐 Your TheDailySocial verification code',
+              heading: 'Use the code below to verify your email address.',
+              label: 'Your verification code',
+            };
 
     const html = this.buildOtpHtml(toName, otp, expiresFormatted, copy.heading, copy.label);
     const text = this.buildOtpText(toName, otp, expiresFormatted, copy.heading);
+
+    // In local dev, skip SES and log the OTP so the flow is testable without AWS config
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.warn(
+        `[DEV] OTP email NOT sent via SES. ` +
+        `to=${toEmail} purpose=${purpose} otp=${otp} expires=${expiresFormatted}`,
+      );
+      return;
+    }
 
     const input: SendEmailCommandInput = {
       Source: `TheDailySocial <${this.fromAddress}>`,
@@ -66,8 +82,14 @@ export class EmailService {
     };
 
     const command = new SendEmailCommand(input);
-    await this.ses.send(command);
-    this.logger.log(`${purpose} OTP email sent to ${toEmail}`);
+    try {
+      await this.ses.send(command);
+      this.logger.log(`${purpose} OTP email sent to ${toEmail}`);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.error(`SES send failed for ${toEmail} (${purpose}): ${msg}`);
+      throw new Error(`Failed to send OTP email. Please try again.`);
+    }
   }
 
   // ─── PRIVATE: HTML TEMPLATE ───────────────────────────────────────────────

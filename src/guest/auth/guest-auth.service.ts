@@ -127,15 +127,103 @@ export class GuestAuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    // 2FA: send OTP email and require a second step before issuing the token
+    if (guest.two_fa_enabled && guest.email) {
+      await this.sendTwoFaOtp(guest.id, guest.email, guest.name);
+      return { requires_2fa: true };
+    }
+
     const token = this.issueToken(guest);
-
-    // Auto-link any eZee bookings matching this guest's email/phone
     this.autoLinkBookings(guest);
+    return { access_token: token, guest: this.formatGuest(guest) };
+  }
 
-    return {
-      access_token: token,
-      guest: this.formatGuest(guest),
-    };
+  async verifyTwoFa(email: string, otp: string) {
+    const guest = await this.prisma.guests.findUnique({ where: { email } });
+    if (!guest) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+
+    const log = await this.prisma.otp_logs.findFirst({
+      where: {
+        guest_id: guest.id,
+        channel: 'email',
+        purpose: 'two_fa',
+        used_at: null,
+        expires_at: { gt: new Date() },
+      },
+      orderBy: { created_at: 'desc' },
+    });
+
+    if (!log) {
+      throw new BadRequestException('OTP expired or not found. Please log in again.');
+    }
+
+    const valid = await bcrypt.compare(otp, log.otp_hash);
+    if (!valid) {
+      throw new UnauthorizedException('Invalid OTP');
+    }
+
+    await this.prisma.otp_logs.update({
+      where: { id: log.id },
+      data: { used_at: new Date() },
+    });
+
+    const token = this.issueToken(guest);
+    this.autoLinkBookings(guest);
+    return { access_token: token, guest: this.formatGuest(guest) };
+  }
+
+  async toggleTwoFa(guestId: string, enabled: boolean) {
+    const guest = await this.prisma.guests.update({
+      where: { id: guestId },
+      data: { two_fa_enabled: enabled },
+    });
+    return { two_fa_enabled: guest.two_fa_enabled };
+  }
+
+  private async sendTwoFaOtp(guestId: string, email: string, name: string | null) {
+    // Rate-limit: one OTP per 60 seconds
+    const recent = await this.prisma.otp_logs.findFirst({
+      where: {
+        guest_id: guestId,
+        channel: 'email',
+        purpose: 'two_fa',
+        used_at: null,
+        created_at: { gte: new Date(Date.now() - 60_000) },
+      },
+    });
+    if (recent) return; // silently skip — frontend just shows "check your email"
+
+    const otp = String(Math.floor(100_000 + Math.random() * 900_000));
+    const otp_hash = await bcrypt.hash(otp, 10);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1_000);
+
+    const otpId = uuidv4();
+    await this.prisma.otp_logs.create({
+      data: {
+        id: otpId,
+        guest_id: guestId,
+        recipient: email,
+        channel: 'email',
+        purpose: 'two_fa',
+        otp_hash,
+        expires_at: expiresAt,
+      },
+    });
+
+    try {
+      await this.emailService.sendOtpEmail({
+        toEmail: email,
+        toName: name || 'Guest',
+        otp,
+        expiresAt,
+        purpose: 'two_fa',
+      });
+    } catch (err) {
+      await this.prisma.otp_logs.delete({ where: { id: otpId } }).catch(() => null);
+      throw err;
+    }
   }
 
   async getMe(guestId: string) {
@@ -204,9 +292,10 @@ export class GuestAuthService {
     const otp_hash = await bcrypt.hash(otp, 10);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1_000); // +10 minutes
 
+    const otpId = uuidv4();
     await this.prisma.otp_logs.create({
       data: {
-        id: uuidv4(),
+        id: otpId,
         guest_id: guest.id,
         recipient: email,
         channel: 'email',
@@ -216,12 +305,17 @@ export class GuestAuthService {
       },
     });
 
-    await this.emailService.sendOtpEmail({
-      toEmail: email,
-      toName: guest.name || 'Guest',
-      otp,
-      expiresAt,
-    });
+    try {
+      await this.emailService.sendOtpEmail({
+        toEmail: email,
+        toName: guest.name || 'Guest',
+        otp,
+        expiresAt,
+      });
+    } catch (err) {
+      await this.prisma.otp_logs.delete({ where: { id: otpId } }).catch(() => null);
+      throw err;
+    }
 
     return {
       message: 'OTP sent to your email address',
@@ -311,9 +405,10 @@ export class GuestAuthService {
     const otp_hash = await bcrypt.hash(otp, 10);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1_000);
 
+    const otpId = uuidv4();
     await this.prisma.otp_logs.create({
       data: {
-        id: uuidv4(),
+        id: otpId,
         guest_id: guest.id,
         recipient: email,
         channel: 'email',
@@ -323,13 +418,19 @@ export class GuestAuthService {
       },
     });
 
-    await this.emailService.sendOtpEmail({
-      toEmail: email,
-      toName: guest.name || 'Guest',
-      otp,
-      expiresAt,
-      purpose: 'password_reset',
-    });
+    try {
+      await this.emailService.sendOtpEmail({
+        toEmail: email,
+        toName: guest.name || 'Guest',
+        otp,
+        expiresAt,
+        purpose: 'password_reset',
+      });
+    } catch (err) {
+      // Roll back the OTP record so the guest isn't blocked by the rate limit
+      await this.prisma.otp_logs.delete({ where: { id: otpId } }).catch(() => null);
+      throw err;
+    }
 
     return {
       message: 'Password reset OTP sent to your email',
