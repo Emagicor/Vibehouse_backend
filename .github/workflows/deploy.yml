@@ -43,30 +43,6 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Run Prisma migrations (inside VPC via ECS run-task)
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          # Must use the newly built image so the task has the latest migration files.
-          # Using the old task-definition image meant new migration files were absent
-          # and schema changes were never applied to Aurora before the new code deployed.
-          OVERRIDES=$(printf '{"containerOverrides":[{"name":"tds-api","image":"%s/tds-backend:%s","command":["npx","prisma","migrate","deploy"]}]}' \
-            "$ECR_REGISTRY" "$IMAGE_TAG")
-          TASK_ARN=$(aws ecs run-task \
-            --cluster tds-production \
-            --task-definition tds-backend \
-            --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[subnet-0336cdf666aef4dc1,subnet-051cd40f880567176],securityGroups=[sg-0fc5c1075b47b6bf7],assignPublicIp=ENABLED}" \
-            --overrides "$OVERRIDES" \
-            --query 'tasks[0].taskArn' --output text)
-          echo "Migration task: $TASK_ARN"
-          aws ecs wait tasks-stopped --cluster tds-production --tasks "$TASK_ARN"
-          EXIT_CODE=$(aws ecs describe-tasks --cluster tds-production --tasks "$TASK_ARN" \
-            --query 'tasks[0].containers[?name==`tds-api`].exitCode' --output text)
-          echo "Migration exit code: $EXIT_CODE"
-          if [ "$EXIT_CODE" != "0" ]; then echo "Migration failed" && exit 1; fi
-
       - name: Download current ECS task definition
         run: |
           aws ecs describe-task-definition \
@@ -82,10 +58,36 @@ jobs:
           container-name: ${{ env.CONTAINER_NAME }}
           image: ${{ steps.build-image.outputs.image }}
 
+      - name: Register updated task definition
+        id: register-task-def
+        run: |
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://${{ steps.task-def.outputs.task-definition }} \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "task-def-arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
+
+      - name: Run Prisma migrations (inside VPC via ECS run-task)
+        run: |
+          # Run migration using the newly registered task definition revision so the
+          # container has the latest migration files before the service is updated.
+          TASK_ARN=$(aws ecs run-task \
+            --cluster tds-production \
+            --task-definition ${{ steps.register-task-def.outputs.task-def-arn }} \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[subnet-0336cdf666aef4dc1,subnet-051cd40f880567176],securityGroups=[sg-0fc5c1075b47b6bf7],assignPublicIp=ENABLED}" \
+            --overrides '{"containerOverrides":[{"name":"tds-api","command":["npx","prisma","migrate","deploy"]}]}' \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Migration task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster tds-production --tasks "$TASK_ARN"
+          EXIT_CODE=$(aws ecs describe-tasks --cluster tds-production --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[?name==`tds-api`].exitCode' --output text)
+          echo "Migration exit code: $EXIT_CODE"
+          if [ "$EXIT_CODE" != "0" ]; then echo "Migration failed" && exit 1; fi
+
       - name: Deploy to ECS (rolling update)
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
-          task-definition: ${{ steps.task-def.outputs.task-definition }}
+          task-definition: ${{ steps.register-task-def.outputs.task-def-arn }}
           service: ${{ env.ECS_SERVICE }}
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
