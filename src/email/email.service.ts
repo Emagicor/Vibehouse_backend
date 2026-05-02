@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import {
   SESClient,
   SendEmailCommand,
@@ -87,8 +87,12 @@ export class EmailService {
       this.logger.log(`${purpose} OTP email sent to ${toEmail}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`SES send failed for ${toEmail} (${purpose}): ${msg}`);
-      throw new Error(`Failed to send OTP email. Please try again.`);
+      // Log the full SES error (visible in CloudWatch) so we can diagnose
+      // sandbox-mode rejections, missing IAM permissions, or unverified domains.
+      this.logger.error(`SES send failed to=${toEmail} purpose=${purpose} error=${msg}`);
+      throw new ServiceUnavailableException(
+        'Could not send OTP email. Please try again in a moment.',
+      );
     }
   }
 
