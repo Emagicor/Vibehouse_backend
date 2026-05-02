@@ -12,8 +12,15 @@ export class EmailService {
   private readonly fromAddress = process.env.SES_FROM_EMAIL ?? 'noreply@thedailysocial.co.in';
 
   constructor() {
+    // Explicitly pass env-var credentials so the client never falls back to an
+    // ECS task IAM role that may lack ses:SendEmail.
+    const accessKeyId     = process.env.AWS_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
     this.ses = new SESClient({
       region: process.env.AWS_REGION ?? 'ap-south-1',
+      ...(accessKeyId && secretAccessKey
+        ? { credentials: { accessKeyId, secretAccessKey } }
+        : {}),
     });
   }
 
