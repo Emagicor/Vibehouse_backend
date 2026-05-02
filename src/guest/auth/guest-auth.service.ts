@@ -713,6 +713,7 @@ export class GuestAuthService {
     phone: string | null;
     email_verified: boolean;
     phone_verified: boolean;
+    two_fa_enabled: boolean;
     profile_photo_url: string | null;
     created_at: Date;
   }) {
@@ -723,6 +724,7 @@ export class GuestAuthService {
       phone: guest.phone,
       email_verified: guest.email_verified,
       phone_verified: guest.phone_verified,
+      two_fa_enabled: guest.two_fa_enabled,
       profile_photo_url: guest.profile_photo_url,
       created_at: guest.created_at,
     };

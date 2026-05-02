@@ -44,13 +44,21 @@ jobs:
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
       - name: Run Prisma migrations (inside VPC via ECS run-task)
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
+          # Must use the newly built image so the task has the latest migration files.
+          # Using the old task-definition image meant new migration files were absent
+          # and schema changes were never applied to Aurora before the new code deployed.
+          OVERRIDES=$(printf '{"containerOverrides":[{"name":"tds-api","image":"%s/tds-backend:%s","command":["npx","prisma","migrate","deploy"]}]}' \
+            "$ECR_REGISTRY" "$IMAGE_TAG")
           TASK_ARN=$(aws ecs run-task \
             --cluster tds-production \
             --task-definition tds-backend \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[subnet-0336cdf666aef4dc1,subnet-051cd40f880567176],securityGroups=[sg-0fc5c1075b47b6bf7],assignPublicIp=ENABLED}" \
-            --overrides '{"containerOverrides":[{"name":"tds-api","command":["npx","prisma","migrate","deploy"]}]}' \
+            --overrides "$OVERRIDES" \
             --query 'tasks[0].taskArn' --output text)
           echo "Migration task: $TASK_ARN"
           aws ecs wait tasks-stopped --cluster tds-production --tasks "$TASK_ARN"
